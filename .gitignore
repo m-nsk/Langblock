@@ -3,3 +3,4 @@ dist/
 public/icons/
 .claude/
 CLAUDE.md
+.env

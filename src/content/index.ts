@@ -19,15 +19,21 @@ function splitSentences(text: string): string[] {
 interface Sentence {
   text: string
   parent: Element
-  indexInParent: number
+}
+
+// Each entry carries the global sentence index so applyDensity can look up
+// which sentences within a paragraph were selected for translation.
+interface ParentEntry {
+  text: string
+  globalIdx: number
 }
 
 function buildSentences(): {
   sentences: Sentence[]
-  sentencesByParent: Map<Element, string[]>
+  sentencesByParent: Map<Element, ParentEntry[]>
 } {
   const sentences: Sentence[] = []
-  const sentencesByParent = new Map<Element, string[]>()
+  const sentencesByParent = new Map<Element, ParentEntry[]>()
 
   for (const p of Array.from(document.querySelectorAll('p'))) {
     if (isExcluded(p)) continue
@@ -35,10 +41,12 @@ function buildSentences(): {
     if (!text) continue
     const parts = splitSentences(text)
     if (parts.length === 0) continue
-    sentencesByParent.set(p, parts)
-    for (let i = 0; i < parts.length; i++) {
-      sentences.push({ text: parts[i], parent: p, indexInParent: i })
+    const entries: ParentEntry[] = []
+    for (const sentText of parts) {
+      entries.push({ text: sentText, globalIdx: sentences.length })
+      sentences.push({ text: sentText, parent: p })
     }
+    sentencesByParent.set(p, entries)
   }
 
   return { sentences, sentencesByParent }
@@ -51,14 +59,14 @@ function scoreSentence(s: Sentence, pageHeight: number): number {
   return score
 }
 
-// Stores original innerHTML per paragraph so applyDensity is idempotent.
+// Stores original innerHTML per paragraph so restoration is exact.
 const originalHTML = new Map<Element, string>()
 
-function applyDensity(
+async function applyDensity(
   sentences: Sentence[],
-  sentencesByParent: Map<Element, string[]>,
+  sentencesByParent: Map<Element, ParentEntry[]>,
   density: number,
-): void {
+): Promise<void> {
   for (const [el, html] of originalHTML) {
     el.innerHTML = html
   }
@@ -71,9 +79,8 @@ function applyDensity(
     .map((s, idx) => ({ s, idx, score: scoreSentence(s, pageHeight) }))
     .sort((a, b) => b.score - a.score)
 
-  // Greedy selection in score order. Skip any candidate whose immediate
-  // neighbour (in document order) is already selected — ensures at least
-  // one untranslated sentence between every pair of translated ones.
+  // Greedy selection in score order: skip any candidate whose immediate
+  // neighbour (in document order) is already selected.
   const selectedIndices = new Set<number>()
   const count = Math.ceil(sentences.length * density)
   for (const { idx } of scored) {
@@ -83,29 +90,45 @@ function applyDensity(
     }
   }
 
-  // Group selected sentence positions by parent paragraph.
-  const selectedByParent = new Map<Element, Set<number>>()
-  for (const idx of selectedIndices) {
-    const { parent, indexInParent } = sentences[idx]
-    if (!selectedByParent.has(parent)) selectedByParent.set(parent, new Set())
-    selectedByParent.get(parent)!.add(indexInParent)
+  // Send only the selected sentence texts for translation (in document order).
+  const selectedList = [...selectedIndices].sort((a, b) => a - b)
+
+  let translated: string[]
+  try {
+    const result = await chrome.runtime.sendMessage({
+      type: 'TRANSLATE_BLOCKS',
+      texts: selectedList.map((idx) => sentences[idx].text),
+      targetLang: 'FR',
+    })
+    if (!Array.isArray(result)) throw new Error('unexpected response')
+    translated = result as string[]
+  } catch (err) {
+    console.error('[Langblock] translation failed', err)
+    return
   }
 
-  // Rebuild each affected paragraph as a mix of text nodes and translated spans.
-  for (const [parentEl, selectedSet] of selectedByParent) {
-    const parts = sentencesByParent.get(parentEl)!
+  // Map global sentence index → translated text.
+  const translationMap = new Map<number, string>()
+  selectedList.forEach((idx, i) => translationMap.set(idx, translated[i]))
+
+  // Rebuild each affected paragraph as individual sentence spans + text nodes.
+  const affectedParents = new Set(selectedList.map((idx) => sentences[idx].parent))
+  for (const parentEl of affectedParents) {
+    const entries = sentencesByParent.get(parentEl)!
     originalHTML.set(parentEl, parentEl.innerHTML)
     const fragment = document.createDocumentFragment()
-    parts.forEach((sentText, i) => {
-      if (selectedSet.has(i)) {
+    entries.forEach(({ text, globalIdx }, i) => {
+      const translatedText = translationMap.get(globalIdx)
+      if (translatedText !== undefined) {
         const span = document.createElement('span')
         span.className = 'langblock-translated'
-        span.textContent = `[FR] ${sentText}`
+        span.dataset.langblockOriginal = text
+        span.textContent = translatedText
         fragment.appendChild(span)
       } else {
-        fragment.appendChild(document.createTextNode(sentText))
+        fragment.appendChild(document.createTextNode(text))
       }
-      if (i < parts.length - 1) fragment.appendChild(document.createTextNode(' '))
+      if (i < entries.length - 1) fragment.appendChild(document.createTextNode(' '))
     })
     parentEl.replaceChildren(fragment)
   }
@@ -115,12 +138,13 @@ function injectStyles(): void {
   const style = document.createElement('style')
   style.textContent = `
     .langblock-translated {
-      background: rgba(99, 102, 241, 0.12);
-      border-left: 3px solid #6366f1;
-      padding: 1px 0 1px 6px;
-      border-radius: 2px;
-      color: #4338ca;
-      font-style: italic;
+      background: rgba(59, 130, 246, 0.08);
+      border-left: 3px solid rgba(59, 130, 246, 0.3);
+      padding: 2px 6px;
+      cursor: pointer;
+    }
+    .langblock-translated:hover {
+      background: rgba(59, 130, 246, 0.15);
     }
   `
   document.head.appendChild(style)
@@ -131,11 +155,11 @@ const { sentences, sentencesByParent } = buildSentences()
 injectStyles()
 
 chrome.storage.sync.get('density', ({ density = 0 }) => {
-  applyDensity(sentences, sentencesByParent, density as number)
+  void applyDensity(sentences, sentencesByParent, density as number)
 })
 
 chrome.runtime.onMessage.addListener((msg: { type: string; density: number }) => {
   if (msg.type === 'SET_DENSITY') {
-    applyDensity(sentences, sentencesByParent, msg.density)
+    void applyDensity(sentences, sentencesByParent, msg.density)
   }
 })

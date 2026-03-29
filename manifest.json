@@ -4,6 +4,7 @@
   "version": "0.0.1",
   "description": "Langblock Chrome Extension",
   "permissions": ["storage", "tabs"],
+  "host_permissions": ["https://api-free.deepl.com/"],
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
