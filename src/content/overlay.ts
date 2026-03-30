@@ -88,7 +88,7 @@ const OVERLAY_STYLES = `
   .show-answer-btn:hover { color: #374151; }
 
   .check-btn {
-    background: #3b82f6;
+    background: #5479e9;
     color: #fff;
     border: none;
     border-radius: 6px;
@@ -98,7 +98,7 @@ const OVERLAY_STYLES = `
     cursor: pointer;
     font-family: inherit;
   }
-  .check-btn:hover { background: #2563eb; }
+  .check-btn:hover { background: #1E4ED8; }
 
   /* Result screen */
   .result-box {

@@ -7,6 +7,7 @@ async function applyDensity(
   sentences: Sentence[],
   sentencesByParent: Map<Element, ParentEntry[]>,
   density: number,
+  lang: string,
 ): Promise<void> {
   closeOverlay()
   for (const [el, html] of originalHTML) {
@@ -41,7 +42,7 @@ async function applyDensity(
     const result = await chrome.runtime.sendMessage({
       type: 'TRANSLATE_BLOCKS',
       texts: selectedList.map((idx) => sentences[idx].html),
-      targetLang: 'FR',
+      targetLang: lang,
     })
     if (!Array.isArray(result)) throw new Error('unexpected response')
     translated = result as string[]
@@ -104,8 +105,8 @@ const { sentences, sentencesByParent } = buildSentences()
 
 injectStyles()
 
-chrome.storage.sync.get('density', ({ density = 0 }) => {
-  void applyDensity(sentences, sentencesByParent, density as number)
+chrome.storage.sync.get(['density', 'lang'], ({ density = 0, lang = 'FR' }) => {
+  void applyDensity(sentences, sentencesByParent, density as number, lang as string)
 })
 
 function getStats() {
@@ -115,13 +116,21 @@ function getStats() {
   }
 }
 
-chrome.runtime.onMessage.addListener((msg: { type: string; density: number }, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg: { type: string; density: number; lang: string }, _sender, sendResponse) => {
   if (msg.type === 'SET_DENSITY') {
     // Respond immediately with an estimate so the message channel doesn't
     // time out during the async DeepL call.
     const estimated = msg.density === 0 ? 0 : Math.ceil(sentences.length * msg.density)
     sendResponse({ translated: estimated, total: sentences.length })
-    void applyDensity(sentences, sentencesByParent, msg.density)
+    chrome.storage.sync.get('lang', ({ lang = 'FR' }) => {
+      void applyDensity(sentences, sentencesByParent, msg.density, lang as string)
+    })
+  }
+  if (msg.type === 'SET_LANG') {
+    sendResponse(getStats())
+    chrome.storage.sync.get('density', ({ density = 0 }) => {
+      void applyDensity(sentences, sentencesByParent, density as number, msg.lang)
+    })
   }
   if (msg.type === 'GET_STATS') {
     sendResponse(getStats())

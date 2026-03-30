@@ -13,13 +13,24 @@ interface Stats {
 }
 
 
+const LANGUAGES: Array<{ code: string; label: string }> = [
+  { code: 'ZH', label: 'Chinese' },
+  { code: 'FR', label: 'French' },
+  { code: 'JA', label: 'Japanese' },
+  { code: 'KO', label: 'Korean' },
+  { code: 'RU', label: 'Russian' },
+  { code: 'ES', label: 'Spanish' },
+]
+
 export default function App() {
   const [density, setDensity] = useState(0)
+  const [language, setLanguage] = useState('FR')
   const [stats, setStats] = useState<Stats | null>(null)
 
   useEffect(() => {
-    chrome.storage.sync.get('density', ({ density = 0 }) => {
+    chrome.storage.sync.get(['density', 'lang'], ({ density = 0, lang = 'FR' }) => {
       setDensity(density as number)
+      setLanguage(lang as string)
     })
     chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
       if (tab?.id != null) {
@@ -29,6 +40,18 @@ export default function App() {
       }
     })
   }, [])
+
+  function handleLanguageChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    const lang = e.target.value
+    setLanguage(lang)
+    chrome.storage.sync.set({ lang })
+    chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+      if (tab?.id == null) return
+      chrome.tabs.sendMessage(tab.id, { type: 'SET_LANG', lang })
+        .then((res) => { if (res != null) setStats(res as Stats) })
+        .catch(() => {})
+    })
+  }
 
   function handleDensityChange(e: React.ChangeEvent<HTMLInputElement>) {
     const value = parseFloat(e.target.value)
@@ -65,7 +88,8 @@ export default function App() {
         </label>
         <div style={{ position: 'relative' }}>
           <select
-            defaultValue="fr"
+            value={language}
+            onChange={handleLanguageChange}
             style={{
               width: '100%',
               padding: '8px 32px 8px 12px',
@@ -79,7 +103,9 @@ export default function App() {
               outline: 'none',
             }}
           >
-            <option value="fr">French</option>
+            {LANGUAGES.map(({ code, label }) => (
+              <option key={code} value={code}>{label}</option>
+            ))}
           </select>
           <svg
             style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#6b7280' }}

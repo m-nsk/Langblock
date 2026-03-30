@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Langblock",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Langblock Chrome Extension",
   "permissions": ["storage", "tabs"],
   "host_permissions": ["https://api-free.deepl.com/"],
