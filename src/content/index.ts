@@ -21,11 +21,15 @@ async function applyDensity(
     .map((s, idx) => ({ s, idx, score: scoreSentence(s, pageHeight) }))
     .sort((a, b) => b.score - a.score)
 
+  // At low density keep a gap of 1 between translated sentences so there's
+  // always context around them. Above 50% relax the gap so the count target
+  // is actually reachable (a gap of 1 caps selection at ~50%).
+  const enforceGap = density <= 0.5
   const selectedIndices = new Set<number>()
   const count = Math.ceil(sentences.length * density)
   for (const { idx } of scored) {
     if (selectedIndices.size >= count) break
-    if (!selectedIndices.has(idx - 1) && !selectedIndices.has(idx + 1)) {
+    if (!enforceGap || (!selectedIndices.has(idx - 1) && !selectedIndices.has(idx + 1))) {
       selectedIndices.add(idx)
     }
   }
@@ -104,8 +108,22 @@ chrome.storage.sync.get('density', ({ density = 0 }) => {
   void applyDensity(sentences, sentencesByParent, density as number)
 })
 
-chrome.runtime.onMessage.addListener((msg: { type: string; density: number }) => {
+function getStats() {
+  return {
+    translated: document.querySelectorAll('.langblock-translated').length,
+    total: sentences.length,
+  }
+}
+
+chrome.runtime.onMessage.addListener((msg: { type: string; density: number }, _sender, sendResponse) => {
   if (msg.type === 'SET_DENSITY') {
+    // Respond immediately with an estimate so the message channel doesn't
+    // time out during the async DeepL call.
+    const estimated = msg.density === 0 ? 0 : Math.ceil(sentences.length * msg.density)
+    sendResponse({ translated: estimated, total: sentences.length })
     void applyDensity(sentences, sentencesByParent, msg.density)
+  }
+  if (msg.type === 'GET_STATS') {
+    sendResponse(getStats())
   }
 })
