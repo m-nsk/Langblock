@@ -9,21 +9,62 @@ function isExcluded(el: Element): boolean {
   return false
 }
 
-function splitSentences(text: string): string[] {
-  return text
-    .split(/(?<=[.!?…])\s+/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
+interface DOMSentence {
+  html: string // innerHTML of this sentence — sent to DeepL, preserves inline elements
+  text: string // plain text — used for scoring only
+}
+
+// Splits a paragraph into sentences while preserving inline HTML.
+// Only DIRECT text-node children of `p` are split at sentence boundaries;
+// inline element children (links, em, cite, sup, etc.) are treated as atomic
+// and assigned to whichever sentence they fall within.
+function extractSentencesFromDOM(p: Element): DOMSentence[] {
+  const sentences: DOMSentence[] = []
+  const buf: Node[] = []
+
+  function flush() {
+    if (buf.length === 0) return
+    const tmp = document.createElement('div')
+    for (const n of buf) tmp.appendChild(n)
+    const text = tmp.textContent?.trim() ?? ''
+    if (text.length > 0) sentences.push({ html: tmp.innerHTML, text })
+    buf.length = 0
+  }
+
+  for (const child of Array.from(p.childNodes)) {
+    if (child.nodeType === Node.TEXT_NODE) {
+      const raw = child.textContent ?? ''
+      const re = /[.!?…](?=\s|$)/g
+      let last = 0
+      let m: RegExpExecArray | null
+      while ((m = re.exec(raw)) !== null) {
+        const segEnd = m.index + 1
+        const seg = raw.slice(last, segEnd)
+        if (seg) buf.push(document.createTextNode(seg))
+        flush()
+        last = segEnd
+        // consume whitespace between sentences
+        while (last < raw.length && /\s/.test(raw[last])) last++
+      }
+      const tail = raw.slice(last)
+      if (tail) buf.push(document.createTextNode(tail))
+    } else if (child.nodeType === Node.ELEMENT_NODE) {
+      buf.push(child.cloneNode(true))
+    }
+  }
+
+  flush()
+  return sentences
 }
 
 interface Sentence {
+  html: string
   text: string
   parent: Element
 }
 
-// Each entry carries the global sentence index so applyDensity can look up
-// which sentences within a paragraph were selected for translation.
 interface ParentEntry {
+  html: string
   text: string
   globalIdx: number
 }
@@ -37,14 +78,12 @@ function buildSentences(): {
 
   for (const p of Array.from(document.querySelectorAll('p'))) {
     if (isExcluded(p)) continue
-    const text = p.textContent?.trim() ?? ''
-    if (!text) continue
-    const parts = splitSentences(text)
-    if (parts.length === 0) continue
+    const domSentences = extractSentencesFromDOM(p)
+    if (domSentences.length === 0) continue
     const entries: ParentEntry[] = []
-    for (const sentText of parts) {
-      entries.push({ text: sentText, globalIdx: sentences.length })
-      sentences.push({ text: sentText, parent: p })
+    for (const { html, text } of domSentences) {
+      entries.push({ html, text, globalIdx: sentences.length })
+      sentences.push({ html, text, parent: p })
     }
     sentencesByParent.set(p, entries)
   }
@@ -90,14 +129,14 @@ async function applyDensity(
     }
   }
 
-  // Send only the selected sentence texts for translation (in document order).
+  // Send selected sentence HTML to the background in document order.
   const selectedList = [...selectedIndices].sort((a, b) => a - b)
 
   let translated: string[]
   try {
     const result = await chrome.runtime.sendMessage({
       type: 'TRANSLATE_BLOCKS',
-      texts: selectedList.map((idx) => sentences[idx].text),
+      texts: selectedList.map((idx) => sentences[idx].html),
       targetLang: 'FR',
     })
     if (!Array.isArray(result)) throw new Error('unexpected response')
@@ -107,26 +146,28 @@ async function applyDensity(
     return
   }
 
-  // Map global sentence index → translated text.
   const translationMap = new Map<number, string>()
   selectedList.forEach((idx, i) => translationMap.set(idx, translated[i]))
 
-  // Rebuild each affected paragraph as individual sentence spans + text nodes.
+  // Rebuild each affected paragraph sentence by sentence.
   const affectedParents = new Set(selectedList.map((idx) => sentences[idx].parent))
   for (const parentEl of affectedParents) {
     const entries = sentencesByParent.get(parentEl)!
     originalHTML.set(parentEl, parentEl.innerHTML)
     const fragment = document.createDocumentFragment()
-    entries.forEach(({ text, globalIdx }, i) => {
-      const translatedText = translationMap.get(globalIdx)
-      if (translatedText !== undefined) {
+    entries.forEach(({ html, globalIdx }, i) => {
+      const translatedHtml = translationMap.get(globalIdx)
+      if (translatedHtml !== undefined) {
         const span = document.createElement('span')
         span.className = 'langblock-translated'
-        span.dataset.langblockOriginal = text
-        span.textContent = translatedText
+        span.dataset.langblockOriginal = html
+        span.innerHTML = translatedHtml
         fragment.appendChild(span)
       } else {
-        fragment.appendChild(document.createTextNode(text))
+        // Re-insert original HTML structure for untranslated sentences.
+        const tmpl = document.createElement('template')
+        tmpl.innerHTML = html
+        fragment.appendChild(tmpl.content)
       }
       if (i < entries.length - 1) fragment.appendChild(document.createTextNode(' '))
     })
@@ -138,13 +179,13 @@ function injectStyles(): void {
   const style = document.createElement('style')
   style.textContent = `
     .langblock-translated {
-      background: rgba(59, 130, 246, 0.08);
-      border-left: 3px solid rgba(59, 130, 246, 0.3);
-      padding: 2px 6px;
+      background: rgba(59, 130, 246, 0.15);
+      border-radius: 4px;
+      padding: 2px 5px;
       cursor: pointer;
     }
     .langblock-translated:hover {
-      background: rgba(59, 130, 246, 0.15);
+      background: rgba(59, 130, 246, 0.2);
     }
   `
   document.head.appendChild(style)

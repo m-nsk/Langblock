@@ -4,13 +4,33 @@ interface DeepLResponse {
   translations: Array<{ detected_source_language: string; text: string }>
 }
 
+interface DeepLUsage {
+  character_count: number
+  character_limit: number
+}
+
+async function checkUsage(charsNeeded: number): Promise<void> {
+  const res = await fetch('https://api-free.deepl.com/v2/usage', {
+    headers: { Authorization: `DeepL-Auth-Key ${__DEEPL_API_KEY__}` },
+  })
+  if (!res.ok) throw new Error(`DeepL usage check failed: ${res.status}`)
+  const { character_count, character_limit }: DeepLUsage = await res.json()
+  const remaining = character_limit - character_count
+  console.log(`[Langblock] usage: ${character_count.toLocaleString()} / ${character_limit.toLocaleString()} (${remaining.toLocaleString()} remaining)`)
+  if (charsNeeded > remaining) {
+    throw new Error(
+      `[Langblock] Halted: ${charsNeeded} chars needed but only ${remaining} remaining (${character_count}/${character_limit})`,
+    )
+  }
+}
+
 interface TranslateMessage {
   type: 'TRANSLATE_BLOCKS'
   texts: string[]
   targetLang: string
 }
 
-const CACHE_PREFIX = 'tc:'
+const CACHE_PREFIX = 'tc2:'
 
 async function getCached(
   texts: string[],
@@ -44,6 +64,9 @@ async function translateTexts(texts: string[], targetLang: string): Promise<stri
   const uniqueUncached = [...new Set(texts.filter((t) => !cached.has(t)))]
 
   if (uniqueUncached.length > 0) {
+    const charsNeeded = uniqueUncached.reduce((sum, t) => sum + t.length, 0)
+    await checkUsage(charsNeeded)
+
     const fresh: string[] = []
 
     for (let i = 0; i < uniqueUncached.length; i += 50) {
