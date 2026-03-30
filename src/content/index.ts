@@ -1,104 +1,6 @@
-const EXCLUDED_ANCESTORS = new Set(['NAV', 'FOOTER', 'SCRIPT', 'CODE', 'FORM', 'BUTTON'])
+import { buildSentences, scoreSentence, type Sentence, type ParentEntry } from './sentences'
+import { showOverlay, closeOverlay, overlayHost } from './overlay'
 
-function isExcluded(el: Element): boolean {
-  let node = el.parentElement
-  while (node) {
-    if (EXCLUDED_ANCESTORS.has(node.tagName)) return true
-    node = node.parentElement
-  }
-  return false
-}
-
-interface DOMSentence {
-  html: string // innerHTML of this sentence — sent to DeepL, preserves inline elements
-  text: string // plain text — used for scoring only
-}
-
-// Splits a paragraph into sentences while preserving inline HTML.
-// Only DIRECT text-node children of `p` are split at sentence boundaries;
-// inline element children (links, em, cite, sup, etc.) are treated as atomic
-// and assigned to whichever sentence they fall within.
-function extractSentencesFromDOM(p: Element): DOMSentence[] {
-  const sentences: DOMSentence[] = []
-  const buf: Node[] = []
-
-  function flush() {
-    if (buf.length === 0) return
-    const tmp = document.createElement('div')
-    for (const n of buf) tmp.appendChild(n)
-    const text = tmp.textContent?.trim() ?? ''
-    if (text.length > 0) sentences.push({ html: tmp.innerHTML, text })
-    buf.length = 0
-  }
-
-  for (const child of Array.from(p.childNodes)) {
-    if (child.nodeType === Node.TEXT_NODE) {
-      const raw = child.textContent ?? ''
-      const re = /[.!?…](?=\s|$)/g
-      let last = 0
-      let m: RegExpExecArray | null
-      while ((m = re.exec(raw)) !== null) {
-        const segEnd = m.index + 1
-        const seg = raw.slice(last, segEnd)
-        if (seg) buf.push(document.createTextNode(seg))
-        flush()
-        last = segEnd
-        // consume whitespace between sentences
-        while (last < raw.length && /\s/.test(raw[last])) last++
-      }
-      const tail = raw.slice(last)
-      if (tail) buf.push(document.createTextNode(tail))
-    } else if (child.nodeType === Node.ELEMENT_NODE) {
-      buf.push(child.cloneNode(true))
-    }
-  }
-
-  flush()
-  return sentences
-}
-
-interface Sentence {
-  html: string
-  text: string
-  parent: Element
-}
-
-interface ParentEntry {
-  html: string
-  text: string
-  globalIdx: number
-}
-
-function buildSentences(): {
-  sentences: Sentence[]
-  sentencesByParent: Map<Element, ParentEntry[]>
-} {
-  const sentences: Sentence[] = []
-  const sentencesByParent = new Map<Element, ParentEntry[]>()
-
-  for (const p of Array.from(document.querySelectorAll('p'))) {
-    if (isExcluded(p)) continue
-    const domSentences = extractSentencesFromDOM(p)
-    if (domSentences.length === 0) continue
-    const entries: ParentEntry[] = []
-    for (const { html, text } of domSentences) {
-      entries.push({ html, text, globalIdx: sentences.length })
-      sentences.push({ html, text, parent: p })
-    }
-    sentencesByParent.set(p, entries)
-  }
-
-  return { sentences, sentencesByParent }
-}
-
-function scoreSentence(s: Sentence, pageHeight: number): number {
-  let score = Math.max(0, 200 - s.text.length)
-  const absTop = s.parent.getBoundingClientRect().top + window.scrollY
-  if (pageHeight > 0 && absTop / pageHeight < 0.2) score -= 15
-  return score
-}
-
-// Stores original innerHTML per paragraph so restoration is exact.
 const originalHTML = new Map<Element, string>()
 
 async function applyDensity(
@@ -106,6 +8,7 @@ async function applyDensity(
   sentencesByParent: Map<Element, ParentEntry[]>,
   density: number,
 ): Promise<void> {
+  closeOverlay()
   for (const [el, html] of originalHTML) {
     el.innerHTML = html
   }
@@ -118,8 +21,6 @@ async function applyDensity(
     .map((s, idx) => ({ s, idx, score: scoreSentence(s, pageHeight) }))
     .sort((a, b) => b.score - a.score)
 
-  // Greedy selection in score order: skip any candidate whose immediate
-  // neighbour (in document order) is already selected.
   const selectedIndices = new Set<number>()
   const count = Math.ceil(sentences.length * density)
   for (const { idx } of scored) {
@@ -129,7 +30,6 @@ async function applyDensity(
     }
   }
 
-  // Send selected sentence HTML to the background in document order.
   const selectedList = [...selectedIndices].sort((a, b) => a - b)
 
   let translated: string[]
@@ -149,7 +49,6 @@ async function applyDensity(
   const translationMap = new Map<number, string>()
   selectedList.forEach((idx, i) => translationMap.set(idx, translated[i]))
 
-  // Rebuild each affected paragraph sentence by sentence.
   const affectedParents = new Set(selectedList.map((idx) => sentences[idx].parent))
   for (const parentEl of affectedParents) {
     const entries = sentencesByParent.get(parentEl)!
@@ -162,9 +61,9 @@ async function applyDensity(
         span.className = 'langblock-translated'
         span.dataset.langblockOriginal = html
         span.innerHTML = translatedHtml
+        span.addEventListener('click', () => showOverlay(span, html))
         fragment.appendChild(span)
       } else {
-        // Re-insert original HTML structure for untranslated sentences.
         const tmpl = document.createElement('template')
         tmpl.innerHTML = html
         fragment.appendChild(tmpl.content)
@@ -190,6 +89,12 @@ function injectStyles(): void {
   `
   document.head.appendChild(style)
 }
+
+document.addEventListener('click', (e) => {
+  if (overlayHost && !overlayHost.contains(e.target as Node)) {
+    closeOverlay()
+  }
+}, true)
 
 const { sentences, sentencesByParent } = buildSentences()
 
