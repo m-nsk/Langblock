@@ -113,6 +113,14 @@ async function ensureOffscreen(): Promise<void> {
   })
 }
 
+chrome.runtime.onInstalled.addListener(() => {
+  ensureOffscreen().catch(() => {})
+})
+
+chrome.runtime.onStartup.addListener(() => {
+  ensureOffscreen().catch(() => {})
+})
+
 interface ScoreMessage {
   type: 'SCORE_SIMILARITY'
   textA: string
