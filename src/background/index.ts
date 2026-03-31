@@ -104,17 +104,54 @@ async function translateTexts(texts: string[], targetLang: string): Promise<stri
   return texts.map((t) => cached.get(t)!)
 }
 
+async function ensureOffscreen(): Promise<void> {
+  if (await chrome.offscreen.hasDocument()) return
+  await chrome.offscreen.createDocument({
+    url: chrome.runtime.getURL('src/offscreen/offscreen.html'),
+    reasons: [chrome.offscreen.Reason.WORKERS],
+    justification: 'ML model inference with transformers.js',
+  })
+}
+
+chrome.runtime.onInstalled.addListener(() => {
+  ensureOffscreen().catch(() => {})
+})
+
+chrome.runtime.onStartup.addListener(() => {
+  ensureOffscreen().catch(() => {})
+})
+
+interface ScoreMessage {
+  type: 'SCORE_SIMILARITY'
+  textA: string
+  textB: string
+}
+
 chrome.runtime.onMessage.addListener(
-  (msg: TranslateMessage, _sender, sendResponse) => {
-    if (msg.type !== 'TRANSLATE_BLOCKS') return
+  (msg: TranslateMessage | ScoreMessage, _sender, sendResponse) => {
+    if (msg.type === 'TRANSLATE_BLOCKS') {
+      translateTexts(msg.texts, msg.targetLang)
+        .then(sendResponse)
+        .catch((err: unknown) => {
+          console.error('[Langblock]', err)
+          sendResponse(null)
+        })
+      return true
+    }
 
-    translateTexts(msg.texts, msg.targetLang)
-      .then(sendResponse)
-      .catch((err: unknown) => {
-        console.error('[Langblock]', err)
-        sendResponse(null)
-      })
-
-    return true
+    if (msg.type === 'SCORE_SIMILARITY') {
+      ensureOffscreen()
+        .then(() =>
+          chrome.runtime.sendMessage(
+            { target: 'offscreen', type: 'score', textA: msg.textA, textB: msg.textB },
+            sendResponse,
+          ),
+        )
+        .catch((err: unknown) => {
+          console.error('[Langblock] offscreen error', err)
+          sendResponse({ error: String(err) })
+        })
+      return true
+    }
   },
 )
