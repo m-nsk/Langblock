@@ -173,14 +173,15 @@ const OVERLAY_STYLES = `
   .link-btn:hover { color: #374151; }
 `
 
-function keywordScore(attempt: string, reference: string): number {
-  const tokenize = (s: string) =>
-    s.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean)
-  const refTokens = new Set(tokenize(reference))
-  if (refTokens.size === 0) return 0
-  const attemptTokens = tokenize(attempt)
-  const hits = attemptTokens.filter((t) => refTokens.has(t)).length
-  return Math.min(100, Math.round((hits / refTokens.size) * 100))
+function requestScore(textA: string, textB: string): Promise<number> {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      { type: 'SCORE_SIMILARITY', textA, textB },
+      (response: { score?: number; error?: string } | null) => {
+        resolve(response?.score ?? 0)
+      },
+    )
+  })
 }
 
 export let overlayHost: HTMLElement | null = null
@@ -259,10 +260,13 @@ export function showOverlay(span: HTMLElement, originalHtml: string): void {
     const checkBtn = document.createElement('button')
     checkBtn.className = 'check-btn'
     checkBtn.textContent = 'Check'
-    checkBtn.addEventListener('click', () => {
+    checkBtn.addEventListener('click', async () => {
       const attempt = ta.value.trim()
       if (!attempt) return
-      renderResult(attempt)
+      checkBtn.disabled = true
+      checkBtn.textContent = 'Checking…'
+      const pct = await requestScore(attempt, originalText)
+      renderResult(attempt, pct)
     })
 
     const footer = document.createElement('div')
@@ -274,12 +278,11 @@ export function showOverlay(span: HTMLElement, originalHtml: string): void {
     ta.focus()
   }
 
-  function renderResult(attempt: string | null) {
+  function renderResult(attempt: string | null, pct: number | null = null) {
     card.innerHTML = ''
     card.appendChild(makeHeader('Result', closeOverlay))
 
-    const hasScore = attempt !== null
-    const pct = hasScore ? keywordScore(attempt!, originalText) : null
+    const hasScore = attempt !== null && pct !== null
     const colorCls = !hasScore ? 'neutral' : pct! >= 80 ? 'green' : pct! >= 50 ? 'amber' : 'red'
     const label = !hasScore ? '' : pct! >= 80 ? 'Great job!' : pct! >= 50 ? 'Close!' : 'Keep practicing'
 
