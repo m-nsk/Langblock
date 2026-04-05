@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Rounded square: light blue fill + dark gray-blue outline -->
+  <rect x="23" y="23" width="466" height="466" rx="73" ry="73"
+        fill="#dbeafe" stroke="#475569" stroke-width="14"/>
+  <!-- L (serif): top bilateral serif + thick stem + thin crossbar -->
+  <path fill="#475569" d="M120 147h60v7h-14v193h104v18H134V154H120z"/>
+  <!-- b (serif): top bilateral serif + thick stem + contrasted bowl -->
+  <path fill="#475569" fill-rule="evenodd"
+        d="M278 147h60v7h-14v87A68 62 0 0 1 324 365H292V154H278z
+           M324 261A36 42 0 0 1 324 345z"/>
+</svg>

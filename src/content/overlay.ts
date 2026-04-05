@@ -184,6 +184,62 @@ function requestScore(textA: string, textB: string): Promise<number> {
   })
 }
 
+function launchConfetti(shadow: ShadowRoot): void {
+  const canvas = document.createElement('canvas')
+  const W = 480
+  const H = 300
+  canvas.width = W
+  canvas.height = H
+  canvas.style.cssText = `
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: ${W}px;
+    height: ${H}px;
+    pointer-events: none;
+    z-index: 10;
+  `
+  shadow.appendChild(canvas)
+
+  const ctx = canvas.getContext('2d')!
+  const colors = ['#f43f5e', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#a855f7']
+  const particles = Array.from({ length: 80 }, () => ({
+    x: W / 2 + (Math.random() - 0.5) * 120,
+    y: H / 2,
+    vx: (Math.random() - 0.5) * 8,
+    vy: Math.random() * -10 - 4,
+    size: Math.random() * 6 + 4,
+    color: colors[Math.floor(Math.random() * colors.length)],
+    rot: Math.random() * Math.PI * 2,
+    drot: (Math.random() - 0.5) * 0.3,
+    alpha: 1,
+  }))
+
+  let frame = 0
+  function tick() {
+    ctx.clearRect(0, 0, W, H)
+    for (const p of particles) {
+      p.x += p.vx
+      p.y += p.vy
+      p.vy += 0.35
+      p.rot += p.drot
+      if (frame > 40) p.alpha -= 0.02
+      if (p.alpha <= 0) continue
+      ctx.save()
+      ctx.globalAlpha = p.alpha
+      ctx.translate(p.x, p.y)
+      ctx.rotate(p.rot)
+      ctx.fillStyle = p.color
+      ctx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2)
+      ctx.restore()
+    }
+    frame++
+    if (frame < 90) requestAnimationFrame(tick)
+    else canvas.remove()
+  }
+  requestAnimationFrame(tick)
+}
+
 export let overlayHost: HTMLElement | null = null
 
 export function closeOverlay(): void {
@@ -260,14 +316,24 @@ export function showOverlay(span: HTMLElement, originalHtml: string): void {
     const checkBtn = document.createElement('button')
     checkBtn.className = 'check-btn'
     checkBtn.textContent = 'Check'
-    checkBtn.addEventListener('click', async () => {
+
+    async function submitAttempt() {
       const attempt = ta.value.trim()
       if (!attempt) return
       checkBtn.disabled = true
       checkBtn.textContent = 'Checking…'
       const pct = await requestScore(attempt, originalText)
       renderResult(attempt, pct)
+    }
+
+    ta.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault()
+        submitAttempt()
+      }
     })
+
+    checkBtn.addEventListener('click', submitAttempt)
 
     const footer = document.createElement('div')
     footer.className = 'footer'
@@ -297,6 +363,7 @@ export function showOverlay(span: HTMLElement, originalHtml: string): void {
       divider.className = 'result-divider'
       resultBox.appendChild(scoreRow)
       resultBox.appendChild(divider)
+      if (pct! >= 95) launchConfetti(shadow)
     }
 
     if (hasScore) {
