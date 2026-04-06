@@ -33,7 +33,7 @@ async function scoreSimilarity(textA: string, textB: string): Promise<number> {
   const embeddingA = data.slice(0, 384)
   const embeddingB = data.slice(384, 768)
   const similarity = cos_sim(embeddingA, embeddingB)
-  return Math.round(Math.max(0, Math.min(100, ((similarity + 1) / 2) * 100)))
+  return Math.round(Math.max(0, Math.min(100, similarity * 100)))
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
