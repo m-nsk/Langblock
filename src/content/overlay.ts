@@ -371,7 +371,11 @@ export function showOverlay(span: HTMLElement, originalHtml: string, blockId: st
       if (!attempt) return
       checkBtn.disabled = true
       checkBtn.textContent = 'Checking…'
-      const pct = await requestScore(attempt, originalText)
+      const rawPct = await requestScore(attempt, originalText)
+      const attemptWords = attempt.split(/\s+/).filter(Boolean).length
+      const originalWords = originalText.split(/\s+/).filter(Boolean).length
+      const coverageFactor = originalWords > 0 ? Math.sqrt(Math.min(1, attemptWords / originalWords)) : 1
+      const pct = Math.round(rawPct * coverageFactor)
       const alreadyAwarded = awardedBlockIds.has(blockId)
       const pointsResult = pct >= POINTS_THRESHOLD && !alreadyAwarded
         ? await requestAwardPoints(originalText, pct)
