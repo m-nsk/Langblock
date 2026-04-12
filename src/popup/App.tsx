@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { DEFAULT_POINTS_STATE, getRank, normalizePointsState, type PointsState } from '../shared/points'
 
 const DENSITY_LABELS: Record<number, string> = {
@@ -29,6 +29,9 @@ export default function App() {
   const [pointsTotal, setPointsTotal] = useState(DEFAULT_POINTS_STATE.pointsTotal)
   const [showPointsOverlay, setShowPointsOverlay] = useState(DEFAULT_POINTS_STATE.showPointsOverlay)
   const [streakDays, setStreakDays] = useState(DEFAULT_POINTS_STATE.streakDays)
+  const [displayPoints, setDisplayPoints] = useState(0)
+  const animFrameRef = useRef<number | null>(null)
+  const animFromRef = useRef(0)
 
   useEffect(() => {
     chrome.storage.sync.get(['density', 'lang'], ({ density = 0, lang = 'FR' }) => {
@@ -64,6 +67,44 @@ export default function App() {
     chrome.storage.onChanged.addListener(handleStorageChange)
     return () => chrome.storage.onChanged.removeListener(handleStorageChange)
   }, [])
+
+  useEffect(() => {
+    if (animFrameRef.current !== null) {
+      cancelAnimationFrame(animFrameRef.current)
+      animFrameRef.current = null
+    }
+
+    const from = animFromRef.current
+    const to = pointsTotal
+    if (from === to) return
+
+    const duration = 800
+    const start = performance.now()
+
+    function frame(now: number) {
+      const t = Math.min(1, (now - start) / duration)
+      const eased = 1 - (1 - t) * (1 - t)
+      const val = Math.round(from + (to - from) * eased)
+      animFromRef.current = val
+      setDisplayPoints(val)
+      if (t < 1) {
+        animFrameRef.current = requestAnimationFrame(frame)
+      } else {
+        animFrameRef.current = null
+        animFromRef.current = to
+        setDisplayPoints(to)
+      }
+    }
+
+    animFrameRef.current = requestAnimationFrame(frame)
+
+    return () => {
+      if (animFrameRef.current !== null) {
+        cancelAnimationFrame(animFrameRef.current)
+        animFrameRef.current = null
+      }
+    }
+  }, [pointsTotal])
 
   function handleLanguageChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const lang = e.target.value
@@ -103,7 +144,7 @@ export default function App() {
   }
 
   const pct = density === 0 ? 'Off' : `${Math.round(density * 100)}%`
-  const { rank, next, progress } = getRank(pointsTotal)
+  const { rank, next, progress } = getRank(displayPoints)
 
   return (
     <div style={{
@@ -182,7 +223,7 @@ export default function App() {
 
         {/* Points total */}
         <div style={{ fontSize: '26px', fontWeight: 700, color: rank.text, lineHeight: 1, marginBottom: '10px' }}>
-          {pointsTotal.toLocaleString()} pts
+          {displayPoints.toLocaleString()} pts
         </div>
 
         {/* Progress to next rank */}
@@ -198,7 +239,7 @@ export default function App() {
               }} />
             </div>
             <div style={{ fontSize: '11px', color: rank.accent, opacity: 0.75 }}>
-              {(next.minPoints - pointsTotal).toLocaleString()} pts to {next.name}
+              {(next.minPoints - displayPoints).toLocaleString()} pts to {next.name}
             </div>
           </>
         ) : (
