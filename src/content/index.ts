@@ -84,9 +84,13 @@ function injectStyles(): void {
   style.textContent = `
     .langblock-translated {
       background: rgba(59, 130, 246, 0.15);
+      color: #0f172a;
       border-radius: 4px;
       padding: 2px 5px;
       cursor: pointer;
+      box-shadow: inset 0 0 0 1px rgba(29, 78, 216, 0.45);
+      -webkit-text-stroke: 0.35px #1d4ed8;
+      paint-order: stroke fill;
     }
     .langblock-translated:hover {
       background: rgba(59, 130, 246, 0.2);
