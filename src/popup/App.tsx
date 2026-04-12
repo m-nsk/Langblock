@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { DEFAULT_POINTS_STATE, normalizePointsState, type PointsState } from '../shared/points'
+import { DEFAULT_POINTS_STATE, getRank, normalizePointsState, type PointsState } from '../shared/points'
 
 const DENSITY_LABELS: Record<number, string> = {
   0: 'Off',
@@ -12,7 +12,6 @@ interface Stats {
   translated: number
   total: number
 }
-
 
 const LANGUAGES: Array<{ code: string; label: string }> = [
   { code: 'ZH', label: 'Chinese' },
@@ -29,6 +28,7 @@ export default function App() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [pointsTotal, setPointsTotal] = useState(DEFAULT_POINTS_STATE.pointsTotal)
   const [showPointsOverlay, setShowPointsOverlay] = useState(DEFAULT_POINTS_STATE.showPointsOverlay)
+  const [streakDays, setStreakDays] = useState(DEFAULT_POINTS_STATE.streakDays)
 
   useEffect(() => {
     chrome.storage.sync.get(['density', 'lang'], ({ density = 0, lang = 'FR' }) => {
@@ -40,6 +40,7 @@ export default function App() {
         const nextState = normalizePointsState(state as Partial<PointsState>)
         setPointsTotal(nextState.pointsTotal)
         setShowPointsOverlay(nextState.showPointsOverlay)
+        setStreakDays(nextState.streakDays)
       })
       .catch(() => {})
     chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
@@ -57,6 +58,7 @@ export default function App() {
       if (areaName !== 'sync') return
       if (changes.pointsTotal) setPointsTotal((changes.pointsTotal.newValue as number | undefined) ?? 0)
       if (changes.showPointsOverlay) setShowPointsOverlay((changes.showPointsOverlay.newValue as boolean | undefined) ?? false)
+      if (changes.streakDays) setStreakDays((changes.streakDays.newValue as number | undefined) ?? 0)
     }
 
     chrome.storage.onChanged.addListener(handleStorageChange)
@@ -95,11 +97,13 @@ export default function App() {
         const nextState = normalizePointsState(state as Partial<PointsState>)
         setPointsTotal(nextState.pointsTotal)
         setShowPointsOverlay(nextState.showPointsOverlay)
+        setStreakDays(nextState.streakDays)
       })
       .catch(() => setShowPointsOverlay(!show))
   }
 
   const pct = density === 0 ? 'Off' : `${Math.round(density * 100)}%`
+  const { rank, next, progress } = getRank(pointsTotal)
 
   return (
     <div style={{
@@ -150,65 +154,101 @@ export default function App() {
         </div>
       </div>
 
-      {/* Immersion level */}
-      <div style={{ marginBottom: '18px' }}>
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginBottom: '12px',
-          padding: '12px 14px',
-          borderRadius: '10px',
-          background: '#f0fdf4',
-          border: '1px solid #bbf7d0',
-        }}>
-          <div>
-            <div style={{ fontSize: '11px', fontWeight: 600, color: '#15803d', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Points
-            </div>
-            <div style={{ fontSize: '24px', fontWeight: 700, color: '#166534', lineHeight: 1.1, marginTop: '4px' }}>
-              {pointsTotal} pts
-            </div>
-          </div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
-            <span style={{ fontSize: '12px', color: '#166534', fontWeight: 500 }}>
-              Overlay
-            </span>
+      {/* Points / Rank */}
+      <div style={{ marginBottom: '10px', padding: '12px 14px', borderRadius: '10px', background: rank.bg, border: `1px solid ${rank.border}` }}>
+        {/* Top row: rank name + streak badge */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+          <span style={{ fontSize: '11px', fontWeight: 700, color: rank.accent, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
+            {rank.name}
+          </span>
+          {streakDays > 0 ? (
             <span style={{
-              position: 'relative',
-              width: '38px',
-              height: '22px',
-              borderRadius: '999px',
-              background: showPointsOverlay ? '#22c55e' : '#d1d5db',
-              transition: 'background 120ms ease',
+              fontSize: '12px', fontWeight: 600, color: rank.accent,
+              border: `1.5px solid ${rank.border}`, borderRadius: '6px',
+              padding: '2px 7px', lineHeight: 1,
             }}>
-              <input
-                type="checkbox"
-                checked={showPointsOverlay}
-                onChange={handlePointsOverlayToggle}
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  opacity: 0,
-                  cursor: 'pointer',
-                  margin: 0,
-                }}
-              />
-              <span style={{
-                position: 'absolute',
-                top: '3px',
-                left: showPointsOverlay ? '19px' : '3px',
-                width: '16px',
-                height: '16px',
-                borderRadius: '50%',
-                background: '#fff',
-                boxShadow: '0 1px 3px rgba(0,0,0,0.18)',
-                transition: 'left 120ms ease',
-              }} />
+              🔥 {streakDays}
             </span>
-          </label>
+          ) : (
+            <span style={{
+              fontSize: '12px', fontWeight: 500, color: '#9ca3af',
+              border: '1.5px solid #e5e7eb', borderRadius: '6px',
+              padding: '2px 7px', lineHeight: 1,
+            }}>
+              –
+            </span>
+          )}
         </div>
 
+        {/* Points total */}
+        <div style={{ fontSize: '26px', fontWeight: 700, color: rank.text, lineHeight: 1, marginBottom: '10px' }}>
+          {pointsTotal.toLocaleString()} pts
+        </div>
+
+        {/* Progress to next rank */}
+        {next ? (
+          <>
+            <div style={{ height: '4px', borderRadius: '999px', background: rank.border, overflow: 'hidden', marginBottom: '5px' }}>
+              <div style={{
+                height: '100%',
+                width: `${Math.max(2, progress * 100)}%`,
+                borderRadius: '999px',
+                background: rank.accent,
+                transition: 'width 400ms ease',
+              }} />
+            </div>
+            <div style={{ fontSize: '11px', color: rank.accent, opacity: 0.75 }}>
+              {(next.minPoints - pointsTotal).toLocaleString()} pts to {next.name}
+            </div>
+          </>
+        ) : (
+          <div style={{ fontSize: '11px', color: rank.accent, fontStyle: 'italic', opacity: 0.75 }}>
+            Max rank reached
+          </div>
+        )}
+      </div>
+
+      {/* Overlay toggle */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px', padding: '4px 2px 0' }}>
+        <span style={{ fontSize: '12px', color: '#6b7280', fontWeight: 500 }}>Points overlay</span>
+        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+          <span style={{
+            position: 'relative',
+            width: '38px',
+            height: '22px',
+            borderRadius: '999px',
+            background: showPointsOverlay ? '#22c55e' : '#d1d5db',
+            transition: 'background 120ms ease',
+          }}>
+            <input
+              type="checkbox"
+              checked={showPointsOverlay}
+              onChange={handlePointsOverlayToggle}
+              style={{
+                position: 'absolute',
+                inset: 0,
+                opacity: 0,
+                cursor: 'pointer',
+                margin: 0,
+              }}
+            />
+            <span style={{
+              position: 'absolute',
+              top: '3px',
+              left: showPointsOverlay ? '19px' : '3px',
+              width: '16px',
+              height: '16px',
+              borderRadius: '50%',
+              background: '#fff',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.18)',
+              transition: 'left 120ms ease',
+            }} />
+          </span>
+        </label>
+      </div>
+
+      {/* Immersion level */}
+      <div style={{ marginBottom: '18px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '10px' }}>
           <span style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Immersion level</span>
           <span style={{ fontSize: '14px', fontWeight: 600, color: '#111827' }}>{pct}</span>

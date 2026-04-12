@@ -1,10 +1,14 @@
 import { buildSentences, scoreSentence, type Sentence, type ParentEntry } from './sentences'
 import { showOverlay, closeOverlay, overlayHost } from './overlay'
-import { DEFAULT_POINTS_STATE, normalizePointsState, type PointsState } from '../shared/points'
+import { DEFAULT_POINTS_STATE, getRank, normalizePointsState, type PointsState, type Rank } from '../shared/points'
 
 const originalHTML = new Map<Element, string>()
 let pointsBadgeHost: HTMLElement | null = null
 let pointsBadgeText: HTMLElement | null = null
+let pointsBadgeRankLabel: HTMLElement | null = null
+let pointsBadgeStreakEl: HTMLElement | null = null
+let pointsBadgeBarFill: HTMLElement | null = null
+let pointsBadgeBadgeEl: HTMLElement | null = null
 let pointsState = DEFAULT_POINTS_STATE
 let pointsBadgeAnimationFrame: number | null = null
 
@@ -15,9 +19,13 @@ function stopPointsBadgeAnimation(): void {
   }
 }
 
-function setPointsBadgeText(pointsTotal: number): void {
+function setPointsBadgePoints(points: number): void {
   if (pointsBadgeText) {
-    pointsBadgeText.textContent = `${pointsTotal} pts`
+    pointsBadgeText.textContent = `${points.toLocaleString()} pts`
+  }
+  if (pointsBadgeBarFill) {
+    const { next, progress } = getRank(points)
+    pointsBadgeBarFill.style.width = next ? `${Math.max(2, progress * 100)}%` : '100%'
   }
 }
 
@@ -31,13 +39,13 @@ function animatePointsBadge(from: number, to: number): void {
     const progress = Math.min(1, (now - start) / durationMs)
     const eased = 1 - (1 - progress) * (1 - progress)
     const current = Math.round(from + (to - from) * eased)
-    setPointsBadgeText(current)
+    setPointsBadgePoints(current)
 
     if (progress < 1) {
       pointsBadgeAnimationFrame = requestAnimationFrame(frame)
     } else {
       pointsBadgeAnimationFrame = null
-      setPointsBadgeText(to)
+      setPointsBadgePoints(to)
     }
   }
 
@@ -45,7 +53,7 @@ function animatePointsBadge(from: number, to: number): void {
 }
 
 function ensurePointsBadge(): HTMLElement {
-  if (pointsBadgeHost && pointsBadgeText) return pointsBadgeHost
+  if (pointsBadgeHost && pointsBadgeText && pointsBadgeBarFill) return pointsBadgeHost
 
   const host = document.createElement('div')
   host.style.cssText = `
@@ -60,48 +68,220 @@ function ensurePointsBadge(): HTMLElement {
   const style = document.createElement('style')
   style.textContent = `
     .badge {
-      display: inline-flex;
+      width: 160px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: var(--rank-bg);
+      border: 1px solid var(--rank-border);
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12);
+      font-family: system-ui, sans-serif;
+      box-sizing: border-box;
+    }
+    .badge-top {
+      display: flex;
+      justify-content: space-between;
       align-items: center;
-      justify-content: center;
-      min-width: 76px;
-      padding: 9px 14px;
-      border-radius: 14px;
-      background: #dcfce7;
-      border: 1px solid #22c55e;
-      box-shadow: 0 10px 24px rgba(22, 101, 52, 0.14);
-      color: #166534;
-      font: 700 14px/1 system-ui, sans-serif;
-      letter-spacing: 0.01em;
+      margin-bottom: 5px;
+    }
+    .badge-rank {
+      font: 700 10px/1 system-ui, sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--rank-accent);
+    }
+    .badge-streak {
+      font: 600 11px/1 system-ui, sans-serif;
+      color: var(--rank-accent);
+      border: 1.5px solid var(--rank-border);
+      border-radius: 5px;
+      padding: 1px 5px;
+      line-height: 1;
+    }
+    .badge-streak-empty {
+      font: 500 11px/1 system-ui, sans-serif;
+      color: #9ca3af;
+      border: 1.5px solid #e5e7eb;
+      border-radius: 5px;
+      padding: 1px 5px;
+      line-height: 1;
+    }
+    .badge-pts {
+      font: 700 15px/1 system-ui, sans-serif;
+      color: var(--rank-text);
+      margin-bottom: 8px;
+    }
+    .badge-bar-track {
+      height: 3px;
+      border-radius: 999px;
+      background: var(--rank-border);
+      overflow: hidden;
+    }
+    .badge-bar-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: var(--rank-accent);
+      transition: width 400ms ease;
     }
   `
+
   const badge = document.createElement('div')
   badge.className = 'badge'
+
+  const top = document.createElement('div')
+  top.className = 'badge-top'
+
+  const rankLabel = document.createElement('span')
+  rankLabel.className = 'badge-rank'
+
+  const streakEl = document.createElement('span')
+
+  const pts = document.createElement('div')
+  pts.className = 'badge-pts'
+
+  const barTrack = document.createElement('div')
+  barTrack.className = 'badge-bar-track'
+
+  const barFill = document.createElement('div')
+  barFill.className = 'badge-bar-fill'
+  barFill.style.width = '2%'
+
+  barTrack.appendChild(barFill)
+  top.append(rankLabel, streakEl)
+  badge.append(top, pts, barTrack)
   shadow.append(style, badge)
 
   document.documentElement.appendChild(host)
   pointsBadgeHost = host
-  pointsBadgeText = badge
+  pointsBadgeText = pts
+  pointsBadgeRankLabel = rankLabel
+  pointsBadgeStreakEl = streakEl
+  pointsBadgeBarFill = barFill
+  pointsBadgeBadgeEl = badge
   return host
 }
 
-function renderPointsBadge(pointsTotal: number, showPointsOverlay: boolean): void {
-  const previousState = pointsState
-  pointsState = { pointsTotal, showPointsOverlay }
+function updateBadgeMeta(state: PointsState): void {
+  const { rank } = getRank(state.pointsTotal)
 
-  if (!showPointsOverlay) {
+  if (pointsBadgeBadgeEl) {
+    pointsBadgeBadgeEl.style.setProperty('--rank-bg', rank.bg)
+    pointsBadgeBadgeEl.style.setProperty('--rank-border', rank.border)
+    pointsBadgeBadgeEl.style.setProperty('--rank-accent', rank.accent)
+    pointsBadgeBadgeEl.style.setProperty('--rank-text', rank.text)
+  }
+
+  if (pointsBadgeRankLabel) {
+    pointsBadgeRankLabel.textContent = rank.name
+  }
+
+  if (pointsBadgeStreakEl) {
+    if (state.streakDays > 0) {
+      pointsBadgeStreakEl.className = 'badge-streak'
+      pointsBadgeStreakEl.textContent = `🔥 ${state.streakDays}`
+    } else {
+      pointsBadgeStreakEl.className = 'badge-streak-empty'
+      pointsBadgeStreakEl.textContent = '–'
+    }
+  }
+}
+
+function showRankUpSplash(rank: Rank): void {
+  const host = document.createElement('div')
+  host.style.cssText = `
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    z-index: 2147483647;
+    pointer-events: none;
+  `
+
+  const shadow = host.attachShadow({ mode: 'open' })
+  const style = document.createElement('style')
+  style.textContent = `
+    @keyframes rankup {
+      0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.75); }
+      12%  { opacity: 1; transform: translate(-50%, -50%) scale(1.04); }
+      22%  { transform: translate(-50%, -50%) scale(1); }
+      65%  { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+      100% { opacity: 0; transform: translate(-50%, -50%) scale(1.06); }
+    }
+    .splash {
+      position: absolute;
+      top: 0;
+      left: 0;
+      transform: translate(-50%, -50%) scale(0.75);
+      background: ${rank.bg};
+      border: 1.5px solid ${rank.border};
+      border-radius: 20px;
+      padding: 28px 52px;
+      text-align: center;
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.16), 0 0 0 4px ${rank.border};
+      animation: rankup 2.6s cubic-bezier(0.34, 1.2, 0.64, 1) forwards;
+      white-space: nowrap;
+    }
+    .label {
+      font: 600 13px/1 system-ui, sans-serif;
+      color: ${rank.accent};
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      margin-bottom: 12px;
+      opacity: 0.75;
+    }
+    .rank-name {
+      font: 800 34px/1 system-ui, sans-serif;
+      color: ${rank.text};
+      letter-spacing: 0.01em;
+    }
+  `
+
+  const splash = document.createElement('div')
+  splash.className = 'splash'
+
+  const label = document.createElement('div')
+  label.className = 'label'
+  label.textContent = 'Rank up!'
+
+  const rankName = document.createElement('div')
+  rankName.className = 'rank-name'
+  rankName.textContent = rank.name
+
+  splash.append(label, rankName)
+  shadow.append(style, splash)
+  document.documentElement.appendChild(host)
+
+  setTimeout(() => host.remove(), 2700)
+}
+
+function renderPointsBadge(state: PointsState): void {
+  const previousState = pointsState
+  pointsState = state
+
+  if (state.pointsTotal > previousState.pointsTotal) {
+    const prevRank = getRank(previousState.pointsTotal).rank
+    const newRank = getRank(state.pointsTotal).rank
+    if (newRank.name !== prevRank.name) showRankUpSplash(newRank)
+  }
+
+  if (!state.showPointsOverlay) {
     stopPointsBadgeAnimation()
     pointsBadgeHost?.remove()
     pointsBadgeHost = null
     pointsBadgeText = null
+    pointsBadgeRankLabel = null
+    pointsBadgeStreakEl = null
+    pointsBadgeBarFill = null
+    pointsBadgeBadgeEl = null
     return
   }
 
   ensurePointsBadge()
-  if (pointsTotal > previousState.pointsTotal && previousState.showPointsOverlay) {
-    animatePointsBadge(previousState.pointsTotal, pointsTotal)
+  updateBadgeMeta(state)
+
+  if (state.pointsTotal > previousState.pointsTotal && previousState.showPointsOverlay) {
+    animatePointsBadge(previousState.pointsTotal, state.pointsTotal)
   } else {
     stopPointsBadgeAnimation()
-    setPointsBadgeText(pointsTotal)
+    setPointsBadgePoints(state.pointsTotal)
   }
 }
 
@@ -109,9 +289,9 @@ function loadPointsBadge(): void {
   chrome.runtime.sendMessage({ type: 'GET_POINTS_STATE' })
     .then((state) => {
       const nextState = normalizePointsState(state as Partial<PointsState>)
-      renderPointsBadge(nextState.pointsTotal, nextState.showPointsOverlay)
+      renderPointsBadge(nextState)
     })
-    .catch(() => renderPointsBadge(DEFAULT_POINTS_STATE.pointsTotal, DEFAULT_POINTS_STATE.showPointsOverlay))
+    .catch(() => renderPointsBadge(DEFAULT_POINTS_STATE))
 }
 
 async function applyDensity(
@@ -227,14 +407,16 @@ chrome.storage.sync.get(['density', 'lang'], ({ density = 0, lang = 'FR' }) => {
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'sync') return
-  if (!changes.pointsTotal && !changes.showPointsOverlay) return
+  if (!changes.pointsTotal && !changes.showPointsOverlay && !changes.streakDays) return
 
   const nextState = normalizePointsState({
     pointsTotal: (changes.pointsTotal?.newValue as number | undefined) ?? pointsState.pointsTotal,
     showPointsOverlay: (changes.showPointsOverlay?.newValue as boolean | undefined) ?? pointsState.showPointsOverlay,
+    streakDays: (changes.streakDays?.newValue as number | undefined) ?? pointsState.streakDays,
+    lastActiveDate: pointsState.lastActiveDate,
   })
 
-  renderPointsBadge(nextState.pointsTotal, nextState.showPointsOverlay)
+  renderPointsBadge(nextState)
 })
 
 function getStats() {

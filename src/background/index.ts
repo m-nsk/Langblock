@@ -146,7 +146,7 @@ type BackgroundMessage =
   | AwardPointsMessage
 
 async function getPointsState(): Promise<PointsState> {
-  const stored = await chrome.storage.sync.get(['pointsTotal', 'showPointsOverlay'])
+  const stored = await chrome.storage.sync.get(['pointsTotal', 'showPointsOverlay', 'streakDays', 'lastActiveDate'])
   return normalizePointsState(stored)
 }
 
@@ -172,9 +172,19 @@ function awardPoints(originalText: string, pct: number): Promise<AwardPointsResp
         return { ...current, awardedPoints }
       }
 
+      const today = new Date().toISOString().slice(0, 10)
+      const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10)
+      let { streakDays, lastActiveDate } = current
+      if (lastActiveDate !== today) {
+        streakDays = lastActiveDate === yesterday ? streakDays + 1 : 1
+        lastActiveDate = today
+      }
+
       const next = {
         ...current,
         pointsTotal: current.pointsTotal + awardedPoints,
+        streakDays,
+        lastActiveDate,
       }
       await chrome.storage.sync.set(next)
       return { ...next, awardedPoints }
