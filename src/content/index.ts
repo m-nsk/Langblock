@@ -1,7 +1,118 @@
 import { buildSentences, scoreSentence, type Sentence, type ParentEntry } from './sentences'
 import { showOverlay, closeOverlay, overlayHost } from './overlay'
+import { DEFAULT_POINTS_STATE, normalizePointsState, type PointsState } from '../shared/points'
 
 const originalHTML = new Map<Element, string>()
+let pointsBadgeHost: HTMLElement | null = null
+let pointsBadgeText: HTMLElement | null = null
+let pointsState = DEFAULT_POINTS_STATE
+let pointsBadgeAnimationFrame: number | null = null
+
+function stopPointsBadgeAnimation(): void {
+  if (pointsBadgeAnimationFrame !== null) {
+    cancelAnimationFrame(pointsBadgeAnimationFrame)
+    pointsBadgeAnimationFrame = null
+  }
+}
+
+function setPointsBadgeText(pointsTotal: number): void {
+  if (pointsBadgeText) {
+    pointsBadgeText.textContent = `${pointsTotal} pts`
+  }
+}
+
+function animatePointsBadge(from: number, to: number): void {
+  stopPointsBadgeAnimation()
+
+  const durationMs = 700
+  const start = performance.now()
+
+  function frame(now: number) {
+    const progress = Math.min(1, (now - start) / durationMs)
+    const eased = 1 - (1 - progress) * (1 - progress)
+    const current = Math.round(from + (to - from) * eased)
+    setPointsBadgeText(current)
+
+    if (progress < 1) {
+      pointsBadgeAnimationFrame = requestAnimationFrame(frame)
+    } else {
+      pointsBadgeAnimationFrame = null
+      setPointsBadgeText(to)
+    }
+  }
+
+  pointsBadgeAnimationFrame = requestAnimationFrame(frame)
+}
+
+function ensurePointsBadge(): HTMLElement {
+  if (pointsBadgeHost && pointsBadgeText) return pointsBadgeHost
+
+  const host = document.createElement('div')
+  host.style.cssText = `
+    position: fixed;
+    left: 16px;
+    bottom: 16px;
+    z-index: 2147483646;
+    pointer-events: none;
+  `
+
+  const shadow = host.attachShadow({ mode: 'open' })
+  const style = document.createElement('style')
+  style.textContent = `
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 76px;
+      padding: 9px 14px;
+      border-radius: 14px;
+      background: #dcfce7;
+      border: 1px solid #22c55e;
+      box-shadow: 0 10px 24px rgba(22, 101, 52, 0.14);
+      color: #166534;
+      font: 700 14px/1 system-ui, sans-serif;
+      letter-spacing: 0.01em;
+    }
+  `
+  const badge = document.createElement('div')
+  badge.className = 'badge'
+  shadow.append(style, badge)
+
+  document.documentElement.appendChild(host)
+  pointsBadgeHost = host
+  pointsBadgeText = badge
+  return host
+}
+
+function renderPointsBadge(pointsTotal: number, showPointsOverlay: boolean): void {
+  const previousState = pointsState
+  pointsState = { pointsTotal, showPointsOverlay }
+
+  if (!showPointsOverlay) {
+    stopPointsBadgeAnimation()
+    pointsBadgeHost?.remove()
+    pointsBadgeHost = null
+    pointsBadgeText = null
+    return
+  }
+
+  ensurePointsBadge()
+  if (pointsTotal > previousState.pointsTotal && previousState.showPointsOverlay) {
+    animatePointsBadge(previousState.pointsTotal, pointsTotal)
+  } else {
+    stopPointsBadgeAnimation()
+    setPointsBadgeText(pointsTotal)
+  }
+}
+
+function loadPointsBadge(): void {
+  chrome.runtime.sendMessage({ type: 'GET_POINTS_STATE' })
+    .then((state) => {
+      const nextState = normalizePointsState(state as Partial<PointsState>)
+      renderPointsBadge(nextState.pointsTotal, nextState.showPointsOverlay)
+    })
+    .catch(() => renderPointsBadge(DEFAULT_POINTS_STATE.pointsTotal, DEFAULT_POINTS_STATE.showPointsOverlay))
+}
 
 async function applyDensity(
   sentences: Sentence[],
@@ -66,7 +177,7 @@ async function applyDensity(
         span.className = 'langblock-translated'
         span.dataset.langblockOriginal = html
         span.innerHTML = translatedHtml
-        span.addEventListener('click', () => showOverlay(span, html))
+        span.addEventListener('click', () => showOverlay(span, html, String(globalIdx)))
         fragment.appendChild(span)
       } else {
         const tmpl = document.createElement('template')
@@ -108,9 +219,22 @@ document.addEventListener('click', (e) => {
 const { sentences, sentencesByParent } = buildSentences()
 
 injectStyles()
+loadPointsBadge()
 
 chrome.storage.sync.get(['density', 'lang'], ({ density = 0, lang = 'FR' }) => {
   void applyDensity(sentences, sentencesByParent, density as number, lang as string)
+})
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'sync') return
+  if (!changes.pointsTotal && !changes.showPointsOverlay) return
+
+  const nextState = normalizePointsState({
+    pointsTotal: (changes.pointsTotal?.newValue as number | undefined) ?? pointsState.pointsTotal,
+    showPointsOverlay: (changes.showPointsOverlay?.newValue as boolean | undefined) ?? pointsState.showPointsOverlay,
+  })
+
+  renderPointsBadge(nextState.pointsTotal, nextState.showPointsOverlay)
 })
 
 function getStats() {

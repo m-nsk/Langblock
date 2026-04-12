@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { DEFAULT_POINTS_STATE, normalizePointsState, type PointsState } from '../shared/points'
 
 const DENSITY_LABELS: Record<number, string> = {
   0: 'Off',
@@ -26,12 +27,21 @@ export default function App() {
   const [density, setDensity] = useState(0)
   const [language, setLanguage] = useState('FR')
   const [stats, setStats] = useState<Stats | null>(null)
+  const [pointsTotal, setPointsTotal] = useState(DEFAULT_POINTS_STATE.pointsTotal)
+  const [showPointsOverlay, setShowPointsOverlay] = useState(DEFAULT_POINTS_STATE.showPointsOverlay)
 
   useEffect(() => {
     chrome.storage.sync.get(['density', 'lang'], ({ density = 0, lang = 'FR' }) => {
       setDensity(density as number)
       setLanguage(lang as string)
     })
+    chrome.runtime.sendMessage({ type: 'GET_POINTS_STATE' })
+      .then((state) => {
+        const nextState = normalizePointsState(state as Partial<PointsState>)
+        setPointsTotal(nextState.pointsTotal)
+        setShowPointsOverlay(nextState.showPointsOverlay)
+      })
+      .catch(() => {})
     chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
       if (tab?.id != null) {
         chrome.tabs.sendMessage(tab.id, { type: 'GET_STATS' })
@@ -39,6 +49,18 @@ export default function App() {
           .catch(() => {})
       }
     })
+
+    const handleStorageChange = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      areaName: string,
+    ) => {
+      if (areaName !== 'sync') return
+      if (changes.pointsTotal) setPointsTotal((changes.pointsTotal.newValue as number | undefined) ?? 0)
+      if (changes.showPointsOverlay) setShowPointsOverlay((changes.showPointsOverlay.newValue as boolean | undefined) ?? false)
+    }
+
+    chrome.storage.onChanged.addListener(handleStorageChange)
+    return () => chrome.storage.onChanged.removeListener(handleStorageChange)
   }, [])
 
   function handleLanguageChange(e: React.ChangeEvent<HTMLSelectElement>) {
@@ -63,6 +85,18 @@ export default function App() {
         .then((res) => { if (res != null) setStats(res as Stats) })
         .catch(() => {})
     })
+  }
+
+  function handlePointsOverlayToggle(e: React.ChangeEvent<HTMLInputElement>) {
+    const show = e.target.checked
+    setShowPointsOverlay(show)
+    chrome.runtime.sendMessage({ type: 'SET_POINTS_OVERLAY', show })
+      .then((state) => {
+        const nextState = normalizePointsState(state as Partial<PointsState>)
+        setPointsTotal(nextState.pointsTotal)
+        setShowPointsOverlay(nextState.showPointsOverlay)
+      })
+      .catch(() => setShowPointsOverlay(!show))
   }
 
   const pct = density === 0 ? 'Off' : `${Math.round(density * 100)}%`
@@ -118,6 +152,63 @@ export default function App() {
 
       {/* Immersion level */}
       <div style={{ marginBottom: '18px' }}>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: '12px',
+          padding: '12px 14px',
+          borderRadius: '10px',
+          background: '#f0fdf4',
+          border: '1px solid #bbf7d0',
+        }}>
+          <div>
+            <div style={{ fontSize: '11px', fontWeight: 600, color: '#15803d', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Points
+            </div>
+            <div style={{ fontSize: '24px', fontWeight: 700, color: '#166534', lineHeight: 1.1, marginTop: '4px' }}>
+              {pointsTotal} pts
+            </div>
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+            <span style={{ fontSize: '12px', color: '#166534', fontWeight: 500 }}>
+              Overlay
+            </span>
+            <span style={{
+              position: 'relative',
+              width: '38px',
+              height: '22px',
+              borderRadius: '999px',
+              background: showPointsOverlay ? '#22c55e' : '#d1d5db',
+              transition: 'background 120ms ease',
+            }}>
+              <input
+                type="checkbox"
+                checked={showPointsOverlay}
+                onChange={handlePointsOverlayToggle}
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  opacity: 0,
+                  cursor: 'pointer',
+                  margin: 0,
+                }}
+              />
+              <span style={{
+                position: 'absolute',
+                top: '3px',
+                left: showPointsOverlay ? '19px' : '3px',
+                width: '16px',
+                height: '16px',
+                borderRadius: '50%',
+                background: '#fff',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.18)',
+                transition: 'left 120ms ease',
+              }} />
+            </span>
+          </label>
+        </div>
+
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '10px' }}>
           <span style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Immersion level</span>
           <span style={{ fontSize: '14px', fontWeight: 600, color: '#111827' }}>{pct}</span>

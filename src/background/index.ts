@@ -1,3 +1,14 @@
+import {
+  DEFAULT_POINTS_STATE,
+  calculateAwardedPoints,
+  normalizePointsState,
+  type AwardPointsMessage,
+  type AwardPointsResponse,
+  type GetPointsStateMessage,
+  type PointsState,
+  type SetPointsOverlayMessage,
+} from '../shared/points'
+
 declare const __DEEPL_API_KEY__: string
 
 interface DeepLResponse {
@@ -127,8 +138,53 @@ interface ScoreMessage {
   textB: string
 }
 
+type BackgroundMessage =
+  | TranslateMessage
+  | ScoreMessage
+  | GetPointsStateMessage
+  | SetPointsOverlayMessage
+  | AwardPointsMessage
+
+async function getPointsState(): Promise<PointsState> {
+  const stored = await chrome.storage.sync.get(['pointsTotal', 'showPointsOverlay'])
+  return normalizePointsState(stored)
+}
+
+async function setPointsOverlay(show: boolean): Promise<PointsState> {
+  const current = await getPointsState()
+  const next = { ...current, showPointsOverlay: show }
+  await chrome.storage.sync.set(next)
+  return next
+}
+
+let awardPointsQueue = Promise.resolve<AwardPointsResponse>({
+  ...DEFAULT_POINTS_STATE,
+  awardedPoints: 0,
+})
+
+function awardPoints(originalText: string, pct: number): Promise<AwardPointsResponse> {
+  awardPointsQueue = awardPointsQueue
+    .catch(() => ({ ...DEFAULT_POINTS_STATE, awardedPoints: 0 }))
+    .then(async () => {
+      const current = await getPointsState()
+      const awardedPoints = calculateAwardedPoints(originalText, pct)
+      if (awardedPoints === 0) {
+        return { ...current, awardedPoints }
+      }
+
+      const next = {
+        ...current,
+        pointsTotal: current.pointsTotal + awardedPoints,
+      }
+      await chrome.storage.sync.set(next)
+      return { ...next, awardedPoints }
+    })
+
+  return awardPointsQueue
+}
+
 chrome.runtime.onMessage.addListener(
-  (msg: TranslateMessage | ScoreMessage, _sender, sendResponse) => {
+  (msg: BackgroundMessage, _sender, sendResponse) => {
     if (msg.type === 'TRANSLATE_BLOCKS') {
       translateTexts(msg.texts, msg.targetLang)
         .then(sendResponse)
@@ -150,6 +206,36 @@ chrome.runtime.onMessage.addListener(
         .catch((err: unknown) => {
           console.error('[Langblock] offscreen error', err)
           sendResponse({ error: String(err) })
+        })
+      return true
+    }
+
+    if (msg.type === 'GET_POINTS_STATE') {
+      getPointsState()
+        .then(sendResponse)
+        .catch((err: unknown) => {
+          console.error('[Langblock] points state error', err)
+          sendResponse(DEFAULT_POINTS_STATE)
+        })
+      return true
+    }
+
+    if (msg.type === 'SET_POINTS_OVERLAY') {
+      setPointsOverlay(msg.show)
+        .then(sendResponse)
+        .catch((err: unknown) => {
+          console.error('[Langblock] points overlay error', err)
+          sendResponse(DEFAULT_POINTS_STATE)
+        })
+      return true
+    }
+
+    if (msg.type === 'AWARD_POINTS') {
+      awardPoints(msg.originalText, Math.max(0, Math.min(100, msg.pct)))
+        .then(sendResponse)
+        .catch((err: unknown) => {
+          console.error('[Langblock] award points error', err)
+          sendResponse({ ...DEFAULT_POINTS_STATE, awardedPoints: 0 })
         })
       return true
     }

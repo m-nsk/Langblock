@@ -1,3 +1,7 @@
+import { POINTS_THRESHOLD, type AwardPointsResponse } from '../shared/points'
+
+const awardedBlockIds = new Set<string>()
+
 const OVERLAY_STYLES = `
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, sans-serif; }
 
@@ -132,6 +136,21 @@ const OVERLAY_STYLES = `
     opacity: 0.25;
     background: currentColor;
   }
+  .result-points {
+    display: inline-flex;
+    align-items: center;
+    margin: 10px 14px 0;
+    padding: 5px 9px;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .result-points.muted {
+    border-color: rgba(0, 0, 0, 0.12);
+    color: rgba(0, 0, 0, 0.62);
+  }
   .result-row {
     display: flex;
     gap: 10px;
@@ -182,6 +201,36 @@ function requestScore(textA: string, textB: string): Promise<number> {
       },
     )
   })
+}
+
+function requestAwardPoints(originalText: string, pct: number): Promise<AwardPointsResponse> {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      { type: 'AWARD_POINTS', originalText, pct },
+      (response: AwardPointsResponse | null) => {
+        resolve(response ?? { pointsTotal: 0, showPointsOverlay: false, awardedPoints: 0 })
+      },
+    )
+  })
+}
+
+function animatePointsLabel(
+  el: HTMLElement,
+  awardedPoints: number,
+  maxPoints: number,
+): void {
+  const durationMs = 650
+  const start = performance.now()
+
+  function frame(now: number) {
+    const progress = Math.min(1, (now - start) / durationMs)
+    const eased = 1 - (1 - progress) * (1 - progress)
+    const current = Math.round(awardedPoints * eased)
+    el.textContent = `+${current}/${maxPoints} points`
+    if (progress < 1) requestAnimationFrame(frame)
+  }
+
+  requestAnimationFrame(frame)
 }
 
 function launchConfetti(shadow: ShadowRoot): void {
@@ -255,7 +304,7 @@ export function revertSpan(span: HTMLElement): void {
   closeOverlay()
 }
 
-export function showOverlay(span: HTMLElement, originalHtml: string): void {
+export function showOverlay(span: HTMLElement, originalHtml: string, blockId: string): void {
   closeOverlay()
 
   const translatedText = span.textContent ?? ''
@@ -323,7 +372,22 @@ export function showOverlay(span: HTMLElement, originalHtml: string): void {
       checkBtn.disabled = true
       checkBtn.textContent = 'Checking…'
       const pct = await requestScore(attempt, originalText)
-      renderResult(attempt, pct)
+      const alreadyAwarded = awardedBlockIds.has(blockId)
+      const pointsResult = pct >= POINTS_THRESHOLD && !alreadyAwarded
+        ? await requestAwardPoints(originalText, pct)
+        : { pointsTotal: 0, showPointsOverlay: false, awardedPoints: 0 }
+
+      if (pointsResult.awardedPoints > 0) {
+        awardedBlockIds.add(blockId)
+      }
+
+      renderResult(
+        attempt,
+        pct,
+        pointsResult.awardedPoints,
+        originalText.length,
+        alreadyAwarded || (pct >= POINTS_THRESHOLD && pointsResult.awardedPoints === 0),
+      )
     }
 
     ta.addEventListener('keydown', (e: KeyboardEvent) => {
@@ -344,13 +408,19 @@ export function showOverlay(span: HTMLElement, originalHtml: string): void {
     ta.focus()
   }
 
-  function renderResult(attempt: string | null, pct: number | null = null) {
+  function renderResult(
+    attempt: string | null,
+    pct: number | null = null,
+    awardedPoints = 0,
+    maxPoints = originalText.length,
+    alreadyAwarded = false,
+  ) {
     card.innerHTML = ''
     card.appendChild(makeHeader('Result', closeOverlay))
 
     const hasScore = attempt !== null && pct !== null
-    const colorCls = !hasScore ? 'neutral' : pct! >= 80 ? 'green' : pct! >= 50 ? 'amber' : 'red'
-    const label = !hasScore ? '' : pct! >= 80 ? 'Great job!' : pct! >= 50 ? 'Close!' : 'Keep practicing'
+    const colorCls = !hasScore ? 'neutral' : pct! >= POINTS_THRESHOLD ? 'green' : pct! >= 50 ? 'amber' : 'red'
+    const label = !hasScore ? '' : pct! >= POINTS_THRESHOLD ? 'Great job!' : pct! >= 50 ? 'Close!' : 'Keep practicing'
 
     const resultBox = document.createElement('div')
     resultBox.className = `result-box ${colorCls}`
@@ -364,6 +434,19 @@ export function showOverlay(span: HTMLElement, originalHtml: string): void {
       resultBox.appendChild(scoreRow)
       resultBox.appendChild(divider)
       if (pct! >= 95) launchConfetti(shadow)
+    }
+
+    if (awardedPoints > 0) {
+      const pointsPill = document.createElement('div')
+      pointsPill.className = 'result-points'
+      pointsPill.textContent = `+0/${maxPoints} points`
+      resultBox.appendChild(pointsPill)
+      animatePointsLabel(pointsPill, awardedPoints, maxPoints)
+    } else if (alreadyAwarded) {
+      const pointsPill = document.createElement('div')
+      pointsPill.className = 'result-points muted'
+      pointsPill.textContent = 'Points already earned'
+      resultBox.appendChild(pointsPill)
     }
 
     if (hasScore) {
