@@ -2,7 +2,7 @@
 
 A Chrome extension that turns any webpage into a gentle language-learning drill. It replaces a density-controlled selection of sentences with real DeepL translations, then lets you practice translating them back via a click-to-quiz overlay scored by semantic similarity.
 
-![Inline translation with click-to-quiz overlay](public/readme/translate_window.png)
+<img src="public/readme/translate_window.png" alt="Inline translation with click-to-quiz overlay" width="600" />
 
 ## Features
 
@@ -13,11 +13,11 @@ A Chrome extension that turns any webpage into a gentle language-learning drill.
 - Points, streaks, and a five-tier rank system (Beginner → Polyglot)
 - DeepL usage guard + local translation cache so repeat visits cost zero characters
 
-![Popup: rank, streak, activity heatmap, and controls](public/readme/popup_ui.png)
+<img src="public/readme/popup_ui.png" alt="Popup: rank, streak, activity heatmap, and controls" height="600" />
 
 Sentences you score low on get added to a spaced-repetition review queue. Two consecutive passes at ≥ 75% delete them.
 
-![Review modal](public/readme/review_ui.png)
+<img src="public/readme/review_ui.png" alt="Review modal" width="500" />
 
 ## Stack
 
