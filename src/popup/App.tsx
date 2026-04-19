@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { DEFAULT_POINTS_STATE, getRank, normalizePointsState, type PointsState } from '../shared/points'
+import type { ActivityLog } from '../shared/activity'
+import ActivityHeatmap from './ActivityHeatmap'
 
 const DENSITY_LABELS: Record<number, string> = {
   0: 'Off',
@@ -29,6 +31,7 @@ export default function App() {
   const [pointsTotal, setPointsTotal] = useState(DEFAULT_POINTS_STATE.pointsTotal)
   const [showPointsOverlay, setShowPointsOverlay] = useState(DEFAULT_POINTS_STATE.showPointsOverlay)
   const [streakDays, setStreakDays] = useState(DEFAULT_POINTS_STATE.streakDays)
+  const [activityLog, setActivityLog] = useState<ActivityLog>({})
   const [displayPoints, setDisplayPoints] = useState(0)
   const animFrameRef = useRef<number | null>(null)
   const animFromRef = useRef(0)
@@ -46,6 +49,9 @@ export default function App() {
         setStreakDays(nextState.streakDays)
       })
       .catch(() => {})
+    chrome.storage.local.get(['activityLog'], ({ activityLog = {} }) => {
+      setActivityLog(activityLog as ActivityLog)
+    })
     chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
       if (tab?.id != null) {
         chrome.tabs.sendMessage(tab.id, { type: 'GET_STATS' })
@@ -58,10 +64,14 @@ export default function App() {
       changes: Record<string, chrome.storage.StorageChange>,
       areaName: string,
     ) => {
-      if (areaName !== 'sync') return
-      if (changes.pointsTotal) setPointsTotal((changes.pointsTotal.newValue as number | undefined) ?? 0)
-      if (changes.showPointsOverlay) setShowPointsOverlay((changes.showPointsOverlay.newValue as boolean | undefined) ?? false)
-      if (changes.streakDays) setStreakDays((changes.streakDays.newValue as number | undefined) ?? 0)
+      if (areaName === 'sync') {
+        if (changes.pointsTotal) setPointsTotal((changes.pointsTotal.newValue as number | undefined) ?? 0)
+        if (changes.showPointsOverlay) setShowPointsOverlay((changes.showPointsOverlay.newValue as boolean | undefined) ?? false)
+        if (changes.streakDays) setStreakDays((changes.streakDays.newValue as number | undefined) ?? 0)
+      }
+      if (areaName === 'local') {
+        if (changes.activityLog) setActivityLog((changes.activityLog.newValue as ActivityLog | undefined) ?? {})
+      }
     }
 
     chrome.storage.onChanged.addListener(handleStorageChange)
@@ -196,7 +206,7 @@ export default function App() {
       </div>
 
       {/* Points / Rank */}
-      <div style={{ marginBottom: '10px', padding: '12px 14px', borderRadius: '10px', background: rank.bg, border: `1px solid ${rank.border}` }}>
+      <div style={{ marginBottom: '18px', padding: '12px 14px', borderRadius: '10px', background: rank.bg, border: `1px solid ${rank.border}` }}>
         {/* Top row: rank name + streak badge */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
           <span style={{ fontSize: '11px', fontWeight: 700, color: rank.accent, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
@@ -248,6 +258,9 @@ export default function App() {
           </div>
         )}
       </div>
+
+      {/* Activity heatmap */}
+      <ActivityHeatmap log={activityLog} rank={rank} />
 
       {/* Overlay toggle */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px', padding: '4px 2px 0' }}>

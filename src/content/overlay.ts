@@ -385,6 +385,10 @@ export function showOverlay(span: HTMLElement, originalHtml: string, blockId: st
         awardedBlockIds.add(blockId)
       }
 
+      chrome.runtime
+        .sendMessage({ type: 'RECORD_ACTIVITY', pointsEarned: pointsResult.awardedPoints })
+        .catch(() => {})
+
       renderResult(
         attempt,
         pct,

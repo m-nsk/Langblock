@@ -8,6 +8,11 @@ import {
   type PointsState,
   type SetPointsOverlayMessage,
 } from '../shared/points'
+import {
+  todayDateUTC,
+  type ActivityLog,
+  type RecordActivityMessage,
+} from '../shared/activity'
 
 declare const __DEEPL_API_KEY__: string
 
@@ -144,6 +149,7 @@ type BackgroundMessage =
   | GetPointsStateMessage
   | SetPointsOverlayMessage
   | AwardPointsMessage
+  | RecordActivityMessage
 
 async function getPointsState(): Promise<PointsState> {
   const stored = await chrome.storage.sync.get(['pointsTotal', 'showPointsOverlay', 'streakDays', 'lastActiveDate'])
@@ -191,6 +197,33 @@ function awardPoints(originalText: string, pct: number): Promise<AwardPointsResp
     })
 
   return awardPointsQueue
+}
+
+async function getActivityLog(): Promise<ActivityLog> {
+  const stored = await chrome.storage.local.get(['activityLog'])
+  return (stored.activityLog as ActivityLog | undefined) ?? {}
+}
+
+let recordActivityQueue: Promise<ActivityLog> = Promise.resolve({})
+
+function recordActivity(pointsEarned: number): Promise<ActivityLog> {
+  recordActivityQueue = recordActivityQueue
+    .catch<ActivityLog>(() => ({}))
+    .then(async () => {
+      const log = await getActivityLog()
+      const date = todayDateUTC()
+      const prev = log[date] ?? { count: 0, points: 0 }
+      const next: ActivityLog = {
+        ...log,
+        [date]: {
+          count: prev.count + 1,
+          points: prev.points + Math.max(0, pointsEarned),
+        },
+      }
+      await chrome.storage.local.set({ activityLog: next })
+      return next
+    })
+  return recordActivityQueue
 }
 
 chrome.runtime.onMessage.addListener(
@@ -246,6 +279,16 @@ chrome.runtime.onMessage.addListener(
         .catch((err: unknown) => {
           console.error('[Langblock] award points error', err)
           sendResponse({ ...DEFAULT_POINTS_STATE, awardedPoints: 0 })
+        })
+      return true
+    }
+
+    if (msg.type === 'RECORD_ACTIVITY') {
+      recordActivity(Math.max(0, msg.pointsEarned | 0))
+        .then((activityLog) => sendResponse({ activityLog }))
+        .catch((err: unknown) => {
+          console.error('[Langblock] record activity error', err)
+          sendResponse({ activityLog: {} })
         })
       return true
     }

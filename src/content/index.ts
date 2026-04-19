@@ -10,6 +10,7 @@ let pointsBadgeStreakEl: HTMLElement | null = null
 let pointsBadgeBarFill: HTMLElement | null = null
 let pointsBadgeBadgeEl: HTMLElement | null = null
 let pointsState = DEFAULT_POINTS_STATE
+let pointsInitialized = false
 let pointsBadgeAnimationFrame: number | null = null
 
 function stopPointsBadgeAnimation(): void {
@@ -254,9 +255,11 @@ function showRankUpSplash(rank: Rank): void {
 
 function renderPointsBadge(state: PointsState): void {
   const previousState = pointsState
+  const wasInitialized = pointsInitialized
   pointsState = state
+  pointsInitialized = true
 
-  if (state.pointsTotal > previousState.pointsTotal) {
+  if (wasInitialized && state.pointsTotal > previousState.pointsTotal) {
     const prevRank = getRank(previousState.pointsTotal).rank
     const newRank = getRank(state.pointsTotal).rank
     if (newRank.name !== prevRank.name) showRankUpSplash(newRank)
