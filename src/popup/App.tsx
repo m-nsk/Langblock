@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { DEFAULT_POINTS_STATE, getRank, normalizePointsState, type PointsState } from '../shared/points'
 import type { ActivityLog } from '../shared/activity'
+import type { ReviewQueue } from '../shared/review'
 import ActivityHeatmap from './ActivityHeatmap'
 
 const DENSITY_LABELS: Record<number, string> = {
@@ -32,6 +33,8 @@ export default function App() {
   const [showPointsOverlay, setShowPointsOverlay] = useState(DEFAULT_POINTS_STATE.showPointsOverlay)
   const [streakDays, setStreakDays] = useState(DEFAULT_POINTS_STATE.streakDays)
   const [activityLog, setActivityLog] = useState<ActivityLog>({})
+  const [reviewQueue, setReviewQueue] = useState<ReviewQueue>([])
+  const [reviewError, setReviewError] = useState<string | null>(null)
   const [displayPoints, setDisplayPoints] = useState(0)
   const animFrameRef = useRef<number | null>(null)
   const animFromRef = useRef(0)
@@ -49,8 +52,9 @@ export default function App() {
         setStreakDays(nextState.streakDays)
       })
       .catch(() => {})
-    chrome.storage.local.get(['activityLog'], ({ activityLog = {} }) => {
+    chrome.storage.local.get(['activityLog', 'reviewQueue'], ({ activityLog = {}, reviewQueue = [] }) => {
       setActivityLog(activityLog as ActivityLog)
+      setReviewQueue(reviewQueue as ReviewQueue)
     })
     chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
       if (tab?.id != null) {
@@ -71,6 +75,7 @@ export default function App() {
       }
       if (areaName === 'local') {
         if (changes.activityLog) setActivityLog((changes.activityLog.newValue as ActivityLog | undefined) ?? {})
+        if (changes.reviewQueue) setReviewQueue((changes.reviewQueue.newValue as ReviewQueue | undefined) ?? [])
       }
     }
 
@@ -137,6 +142,20 @@ export default function App() {
       chrome.tabs.sendMessage(tab.id, { type: 'SET_DENSITY', density: value })
         .then((res) => { if (res != null) setStats(res as Stats) })
         .catch(() => {})
+    })
+  }
+
+  function handleStartReview() {
+    if (reviewQueue.length === 0) return
+    setReviewError(null)
+    chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+      if (tab?.id == null) {
+        setReviewError('Open a regular webpage to start review.')
+        return
+      }
+      chrome.tabs.sendMessage(tab.id, { type: 'START_REVIEW' })
+        .then(() => window.close())
+        .catch(() => setReviewError('Open a regular webpage to start review.'))
     })
   }
 
@@ -261,6 +280,49 @@ export default function App() {
 
       {/* Activity heatmap */}
       <ActivityHeatmap log={activityLog} rank={rank} />
+
+      {/* Review queue */}
+      <div style={{ marginBottom: '18px' }}>
+        <button
+          onClick={handleStartReview}
+          disabled={reviewQueue.length === 0}
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '11px 14px',
+            borderRadius: '10px',
+            border: `1px solid ${reviewQueue.length === 0 ? '#e5e7eb' : rank.border}`,
+            background: reviewQueue.length === 0 ? '#f9fafb' : rank.bg,
+            cursor: reviewQueue.length === 0 ? 'not-allowed' : 'pointer',
+            color: reviewQueue.length === 0 ? '#9ca3af' : rank.text,
+            fontFamily: 'inherit',
+            fontSize: '13px',
+            fontWeight: 600,
+            textAlign: 'left',
+          }}
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '15px' }}>📚</span>
+            <span>Review</span>
+            <span style={{
+              fontSize: '11px',
+              fontWeight: 500,
+              color: reviewQueue.length === 0 ? '#9ca3af' : rank.accent,
+              opacity: 0.8,
+            }}>
+              · {reviewQueue.length === 0 ? 'No sentences queued' : `${reviewQueue.length} sentence${reviewQueue.length === 1 ? '' : 's'}`}
+            </span>
+          </span>
+          {reviewQueue.length > 0 && (
+            <span style={{ fontSize: '14px', color: rank.accent }}>▸</span>
+          )}
+        </button>
+        {reviewError && (
+          <div style={{ marginTop: '6px', fontSize: '11px', color: '#dc2626' }}>{reviewError}</div>
+        )}
+      </div>
 
       {/* Overlay toggle */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px', padding: '4px 2px 0' }}>
