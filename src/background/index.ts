@@ -9,7 +9,8 @@ import {
   type SetPointsOverlayMessage,
 } from '../shared/points'
 import {
-  todayDateUTC,
+  dateISO,
+  todayDateLocal,
   type ActivityLog,
   type RecordActivityMessage,
 } from '../shared/activity'
@@ -188,8 +189,8 @@ function awardPoints(originalText: string, pct: number): Promise<AwardPointsResp
         return { ...current, awardedPoints }
       }
 
-      const today = new Date().toISOString().slice(0, 10)
-      const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10)
+      const today = todayDateLocal()
+      const yesterday = dateISO(new Date(Date.now() - 86400000))
       let { streakDays, lastActiveDate } = current
       if (lastActiveDate !== today) {
         streakDays = lastActiveDate === yesterday ? streakDays + 1 : 1
@@ -221,7 +222,7 @@ function recordActivity(pointsEarned: number): Promise<ActivityLog> {
     .catch<ActivityLog>(() => ({}))
     .then(async () => {
       const log = await getActivityLog()
-      const date = todayDateUTC()
+      const date = todayDateLocal()
       const prev = log[date] ?? { count: 0, points: 0 }
       const next: ActivityLog = {
         ...log,

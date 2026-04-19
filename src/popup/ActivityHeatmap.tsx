@@ -19,9 +19,17 @@ interface Props {
   rank: Rank
 }
 
+interface HoverState {
+  count: number
+  date: Date
+  col: number
+  row: number
+}
+
 export default function ActivityHeatmap({ log, rank }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [weeksCount, setWeeksCount] = useState(17)
+  const [hover, setHover] = useState<HoverState | null>(null)
 
   useLayoutEffect(() => {
     const el = containerRef.current
@@ -43,9 +51,9 @@ export default function ActivityHeatmap({ log, rank }: Props) {
 
   const { weeks, monthLabels, totalCount } = useMemo(() => {
     const now = new Date()
-    const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
-    const start = new Date(todayUTC)
-    start.setUTCDate(todayUTC.getUTCDate() - todayUTC.getUTCDay() - 7 * (weeksCount - 1))
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const start = new Date(today)
+    start.setDate(today.getDate() - today.getDay() - 7 * (weeksCount - 1))
 
     const weeks: Array<Array<DayCell | null>> = []
     const monthLabels: Array<{ label: string; col: number }> = []
@@ -55,8 +63,8 @@ export default function ActivityHeatmap({ log, rank }: Props) {
       const week: Array<DayCell | null> = []
       for (let d = 0; d < 7; d++) {
         const date = new Date(start)
-        date.setUTCDate(start.getUTCDate() + w * 7 + d)
-        if (date > todayUTC) {
+        date.setDate(start.getDate() + w * 7 + d)
+        if (date > today) {
           week.push(null)
         } else {
           const iso = dateISO(date)
@@ -70,15 +78,15 @@ export default function ActivityHeatmap({ log, rank }: Props) {
 
     // Month labels: skip col 0 (start edge), label each subsequent month transition
     // at the Sunday where the month changes.
-    const startMonth = weeks[0][0]?.date.getUTCMonth() ?? -1
+    const startMonth = weeks[0][0]?.date.getMonth() ?? -1
     let prevMonth = startMonth
     for (let w = 1; w < weeksCount; w++) {
       const sunday = weeks[w][0]
       if (!sunday) continue
-      const m = sunday.date.getUTCMonth()
+      const m = sunday.date.getMonth()
       if (m !== prevMonth) {
         monthLabels.push({
-          label: sunday.date.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' }),
+          label: sunday.date.toLocaleString('en-US', { month: 'short' }),
           col: w,
         })
         prevMonth = m
@@ -97,7 +105,7 @@ export default function ActivityHeatmap({ log, rank }: Props) {
   }
 
   function formatTooltip(count: number, date: Date): string {
-    const d = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+    const d = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
     if (count === 0) return `No practice · ${d}`
     return `${count} sentence${count === 1 ? '' : 's'} · ${d}`
   }
@@ -145,6 +153,7 @@ export default function ActivityHeatmap({ log, rank }: Props) {
         </div>
 
         <div style={{
+          position: 'relative',
           display: 'grid',
           gridTemplateColumns: `repeat(${weeksCount}, ${CELL_SIZE}px)`,
           gridTemplateRows: `repeat(7, ${CELL_SIZE}px)`,
@@ -158,16 +167,39 @@ export default function ActivityHeatmap({ log, rank }: Props) {
               ) : (
                 <div
                   key={`${w}-${d}`}
-                  title={formatTooltip(day.count, day.date)}
+                  onMouseEnter={() => setHover({ count: day.count, date: day.date, col: w, row: d })}
+                  onMouseLeave={() => setHover((h) => (h && h.col === w && h.row === d ? null : h))}
                   style={{
                     width: `${CELL_SIZE}px`,
                     height: `${CELL_SIZE}px`,
                     background: getColor(day.count),
                     borderRadius: '2px',
+                    outline: hover && hover.col === w && hover.row === d ? `1.5px solid ${rank.accent}` : 'none',
+                    outlineOffset: '1px',
                   }}
                 />
               ),
             ),
+          )}
+          {hover && (
+            <div style={{
+              position: 'absolute',
+              left: `${hover.col * COLUMN + CELL_SIZE / 2}px`,
+              top: `${hover.row * COLUMN - 8}px`,
+              transform: 'translate(-50%, -100%)',
+              background: '#111827',
+              color: '#fff',
+              fontSize: '11px',
+              fontWeight: 500,
+              padding: '5px 8px',
+              borderRadius: '6px',
+              whiteSpace: 'nowrap',
+              pointerEvents: 'none',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+              zIndex: 10,
+            }}>
+              {formatTooltip(hover.count, hover.date)}
+            </div>
           )}
         </div>
       </div>
