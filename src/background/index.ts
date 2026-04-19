@@ -13,6 +13,15 @@ import {
   type ActivityLog,
   type RecordActivityMessage,
 } from '../shared/activity'
+import {
+  REVIEW_FAIL_THRESHOLD,
+  REVIEW_MASTERY_STREAK,
+  reviewId,
+  type ReviewItem,
+  type ReviewQueue,
+  type UpdateReviewMessage,
+  type UpdateReviewResponse,
+} from '../shared/review'
 
 declare const __DEEPL_API_KEY__: string
 
@@ -150,6 +159,7 @@ type BackgroundMessage =
   | SetPointsOverlayMessage
   | AwardPointsMessage
   | RecordActivityMessage
+  | UpdateReviewMessage
 
 async function getPointsState(): Promise<PointsState> {
   const stored = await chrome.storage.sync.get(['pointsTotal', 'showPointsOverlay', 'streakDays', 'lastActiveDate'])
@@ -226,6 +236,69 @@ function recordActivity(pointsEarned: number): Promise<ActivityLog> {
   return recordActivityQueue
 }
 
+async function getReviewQueue(): Promise<ReviewQueue> {
+  const stored = await chrome.storage.local.get(['reviewQueue'])
+  return (stored.reviewQueue as ReviewQueue | undefined) ?? []
+}
+
+let updateReviewQueueMutation: Promise<UpdateReviewResponse> = Promise.resolve({
+  queue: [],
+  removed: false,
+})
+
+function updateReview(msg: UpdateReviewMessage): Promise<UpdateReviewResponse> {
+  updateReviewQueueMutation = updateReviewQueueMutation
+    .catch<UpdateReviewResponse>(() => ({ queue: [], removed: false }))
+    .then(async () => {
+      const queue = await getReviewQueue()
+      const id = reviewId(msg.targetLang, msg.originalText)
+      const now = Date.now()
+      const idx = queue.findIndex((item) => item.id === id)
+
+      if (idx === -1) {
+        if (msg.score < REVIEW_FAIL_THRESHOLD) {
+          const item: ReviewItem = {
+            id,
+            originalText: msg.originalText,
+            translatedText: msg.translatedText,
+            targetLang: msg.targetLang,
+            addedAt: now,
+            lastAttemptAt: now,
+            lastScore: msg.score,
+            attempts: 1,
+            successStreak: 0,
+            sourceUrl: msg.sourceUrl,
+          }
+          const next = [...queue, item]
+          await chrome.storage.local.set({ reviewQueue: next })
+          return { queue: next, removed: false }
+        }
+        return { queue, removed: false }
+      }
+
+      const existing = queue[idx]
+      const updated: ReviewItem = {
+        ...existing,
+        lastAttemptAt: now,
+        lastScore: msg.score,
+        attempts: existing.attempts + 1,
+        successStreak:
+          msg.score >= REVIEW_FAIL_THRESHOLD ? existing.successStreak + 1 : 0,
+      }
+
+      if (updated.successStreak >= REVIEW_MASTERY_STREAK) {
+        const next = queue.filter((_, i) => i !== idx)
+        await chrome.storage.local.set({ reviewQueue: next })
+        return { queue: next, removed: true }
+      }
+
+      const next = queue.map((item, i) => (i === idx ? updated : item))
+      await chrome.storage.local.set({ reviewQueue: next })
+      return { queue: next, removed: false }
+    })
+  return updateReviewQueueMutation
+}
+
 chrome.runtime.onMessage.addListener(
   (msg: BackgroundMessage, _sender, sendResponse) => {
     if (msg.type === 'TRANSLATE_BLOCKS') {
@@ -289,6 +362,16 @@ chrome.runtime.onMessage.addListener(
         .catch((err: unknown) => {
           console.error('[Langblock] record activity error', err)
           sendResponse({ activityLog: {} })
+        })
+      return true
+    }
+
+    if (msg.type === 'UPDATE_REVIEW') {
+      updateReview(msg)
+        .then(sendResponse)
+        .catch((err: unknown) => {
+          console.error('[Langblock] update review error', err)
+          sendResponse({ queue: [], removed: false })
         })
       return true
     }

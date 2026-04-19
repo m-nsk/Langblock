@@ -1,5 +1,6 @@
 import { buildSentences, scoreSentence, type Sentence, type ParentEntry } from './sentences'
 import { showOverlay, closeOverlay, overlayHost } from './overlay'
+import { showReviewOverlay } from './reviewOverlay'
 import { DEFAULT_POINTS_STATE, getRank, normalizePointsState, type PointsState, type Rank } from '../shared/points'
 
 const originalHTML = new Map<Element, string>()
@@ -297,12 +298,15 @@ function loadPointsBadge(): void {
     .catch(() => renderPointsBadge(DEFAULT_POINTS_STATE))
 }
 
+let currentLang: string = 'FR'
+
 async function applyDensity(
   sentences: Sentence[],
   sentencesByParent: Map<Element, ParentEntry[]>,
   density: number,
   lang: string,
 ): Promise<void> {
+  currentLang = lang
   closeOverlay()
   for (const [el, html] of originalHTML) {
     el.innerHTML = html
@@ -360,7 +364,9 @@ async function applyDensity(
         span.className = 'langblock-translated'
         span.dataset.langblockOriginal = html
         span.innerHTML = translatedHtml
-        span.addEventListener('click', () => showOverlay(span, html, String(globalIdx)))
+        span.addEventListener('click', () =>
+          showOverlay(span, html, String(globalIdx), currentLang, location.href),
+        )
         fragment.appendChild(span)
       } else {
         const tmpl = document.createElement('template')
@@ -430,6 +436,11 @@ function getStats() {
 }
 
 chrome.runtime.onMessage.addListener((msg: { type: string; density: number; lang: string }, _sender, sendResponse) => {
+  if (msg.type === 'START_REVIEW') {
+    void showReviewOverlay()
+    sendResponse({ ok: true })
+    return
+  }
   if (msg.type === 'SET_DENSITY') {
     // Respond immediately with an estimate so the message channel doesn't
     // time out during the async DeepL call.

@@ -1,4 +1,5 @@
-import { POINTS_THRESHOLD, type AwardPointsResponse } from '../shared/points'
+import { POINTS_THRESHOLD } from '../shared/points'
+import { coverageAdjustedPct, requestAwardPoints, requestScore } from './quiz'
 
 const awardedBlockIds = new Set<string>()
 
@@ -192,28 +193,6 @@ const OVERLAY_STYLES = `
   .link-btn:hover { color: #374151; }
 `
 
-function requestScore(textA: string, textB: string): Promise<number> {
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage(
-      { type: 'SCORE_SIMILARITY', textA, textB },
-      (response: { score?: number; error?: string } | null) => {
-        resolve(response?.score ?? 0)
-      },
-    )
-  })
-}
-
-function requestAwardPoints(originalText: string, pct: number): Promise<AwardPointsResponse> {
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage(
-      { type: 'AWARD_POINTS', originalText, pct },
-      (response: AwardPointsResponse | null) => {
-        resolve(response ?? { pointsTotal: 0, showPointsOverlay: false, awardedPoints: 0 })
-      },
-    )
-  })
-}
-
 function animatePointsLabel(
   el: HTMLElement,
   awardedPoints: number,
@@ -304,7 +283,13 @@ export function revertSpan(span: HTMLElement): void {
   closeOverlay()
 }
 
-export function showOverlay(span: HTMLElement, originalHtml: string, blockId: string): void {
+export function showOverlay(
+  span: HTMLElement,
+  originalHtml: string,
+  blockId: string,
+  targetLang: string,
+  sourceUrl: string,
+): void {
   closeOverlay()
 
   const translatedText = span.textContent ?? ''
@@ -372,10 +357,7 @@ export function showOverlay(span: HTMLElement, originalHtml: string, blockId: st
       checkBtn.disabled = true
       checkBtn.textContent = 'Checking…'
       const rawPct = await requestScore(attempt, originalText)
-      const attemptWords = attempt.split(/\s+/).filter(Boolean).length
-      const originalWords = originalText.split(/\s+/).filter(Boolean).length
-      const coverageFactor = originalWords > 0 ? Math.sqrt(Math.min(1, attemptWords / originalWords)) : 1
-      const pct = Math.round(rawPct * coverageFactor)
+      const pct = coverageAdjustedPct(rawPct, attempt, originalText)
       const alreadyAwarded = awardedBlockIds.has(blockId)
       const pointsResult = pct >= POINTS_THRESHOLD && !alreadyAwarded
         ? await requestAwardPoints(originalText, pct)
@@ -387,6 +369,17 @@ export function showOverlay(span: HTMLElement, originalHtml: string, blockId: st
 
       chrome.runtime
         .sendMessage({ type: 'RECORD_ACTIVITY', pointsEarned: pointsResult.awardedPoints })
+        .catch(() => {})
+
+      chrome.runtime
+        .sendMessage({
+          type: 'UPDATE_REVIEW',
+          originalText,
+          translatedText,
+          targetLang,
+          score: pct,
+          sourceUrl,
+        })
         .catch(() => {})
 
       renderResult(
