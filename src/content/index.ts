@@ -2,6 +2,7 @@ import { buildSentences, scoreSentence, type Sentence, type ParentEntry } from '
 import { showOverlay, closeOverlay, overlayHost } from './overlay'
 import { showReviewOverlay } from './reviewOverlay'
 import { DEFAULT_POINTS_STATE, getRank, normalizePointsState, type PointsState, type Rank } from '../shared/points'
+import { animateCount } from '../shared/animateCount'
 
 const originalHTML = new Map<Element, string>()
 let pointsBadgeHost: HTMLElement | null = null
@@ -12,12 +13,12 @@ let pointsBadgeBarFill: HTMLElement | null = null
 let pointsBadgeBadgeEl: HTMLElement | null = null
 let pointsState = DEFAULT_POINTS_STATE
 let pointsInitialized = false
-let pointsBadgeAnimationFrame: number | null = null
+let cancelPointsBadgeAnim: (() => void) | null = null
 
 function stopPointsBadgeAnimation(): void {
-  if (pointsBadgeAnimationFrame !== null) {
-    cancelAnimationFrame(pointsBadgeAnimationFrame)
-    pointsBadgeAnimationFrame = null
+  if (cancelPointsBadgeAnim) {
+    cancelPointsBadgeAnim()
+    cancelPointsBadgeAnim = null
   }
 }
 
@@ -33,25 +34,7 @@ function setPointsBadgePoints(points: number): void {
 
 function animatePointsBadge(from: number, to: number): void {
   stopPointsBadgeAnimation()
-
-  const durationMs = 700
-  const start = performance.now()
-
-  function frame(now: number) {
-    const progress = Math.min(1, (now - start) / durationMs)
-    const eased = 1 - (1 - progress) * (1 - progress)
-    const current = Math.round(from + (to - from) * eased)
-    setPointsBadgePoints(current)
-
-    if (progress < 1) {
-      pointsBadgeAnimationFrame = requestAnimationFrame(frame)
-    } else {
-      pointsBadgeAnimationFrame = null
-      setPointsBadgePoints(to)
-    }
-  }
-
-  pointsBadgeAnimationFrame = requestAnimationFrame(frame)
+  cancelPointsBadgeAnim = animateCount(from, to, 700, setPointsBadgePoints)
 }
 
 function ensurePointsBadge(): HTMLElement {

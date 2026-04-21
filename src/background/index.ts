@@ -107,7 +107,7 @@ async function translateTexts(texts: string[], targetLang: string): Promise<stri
           text: batch,
           target_lang: targetLang,
           tag_handling: 'html',
-          split_sentences: 'nonewlines',
+          split_sentences: '0',
         }),
       })
 

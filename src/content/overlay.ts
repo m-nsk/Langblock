@@ -453,13 +453,15 @@ export function showOverlay(
     if (hasScore) {
       const yoursRow = document.createElement('div')
       yoursRow.className = 'result-row'
-      yoursRow.innerHTML = `<span class="result-row-label">Yours:</span><span class="result-row-text">${attempt}</span>`
+      yoursRow.innerHTML = `<span class="result-row-label">Yours:</span><span class="result-row-text"></span>`
+      ;(yoursRow.lastElementChild as HTMLElement).textContent = attempt
       resultBox.appendChild(yoursRow)
     }
 
     const originalRow = document.createElement('div')
     originalRow.className = 'result-row'
-    originalRow.innerHTML = `<span class="result-row-label">Original:</span><span class="result-row-text">${originalText}</span>`
+    originalRow.innerHTML = `<span class="result-row-label">Original:</span><span class="result-row-text"></span>`
+    ;(originalRow.lastElementChild as HTMLElement).textContent = originalText
     resultBox.appendChild(originalRow)
 
     card.appendChild(resultBox)
