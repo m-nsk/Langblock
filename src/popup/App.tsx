@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { DEFAULT_POINTS_STATE, getRank, normalizePointsState, type PointsState } from '../shared/points'
 import type { ActivityLog } from '../shared/activity'
 import type { ReviewQueue } from '../shared/review'
+import { animateCount } from '../shared/animateCount'
 import ActivityHeatmap from './ActivityHeatmap'
 
 const DENSITY_LABELS: Record<number, string> = {
@@ -36,7 +37,7 @@ export default function App() {
   const [reviewQueue, setReviewQueue] = useState<ReviewQueue>([])
   const [reviewError, setReviewError] = useState<string | null>(null)
   const [displayPoints, setDisplayPoints] = useState(0)
-  const animFrameRef = useRef<number | null>(null)
+  const animCancelRef = useRef<(() => void) | null>(null)
   const animFromRef = useRef(0)
 
   useEffect(() => {
@@ -84,39 +85,24 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (animFrameRef.current !== null) {
-      cancelAnimationFrame(animFrameRef.current)
-      animFrameRef.current = null
+    if (animCancelRef.current) {
+      animCancelRef.current()
+      animCancelRef.current = null
     }
 
     const from = animFromRef.current
     const to = pointsTotal
     if (from === to) return
 
-    const duration = 800
-    const start = performance.now()
-
-    function frame(now: number) {
-      const t = Math.min(1, (now - start) / duration)
-      const eased = 1 - (1 - t) * (1 - t)
-      const val = Math.round(from + (to - from) * eased)
+    animCancelRef.current = animateCount(from, to, 800, (val) => {
       animFromRef.current = val
       setDisplayPoints(val)
-      if (t < 1) {
-        animFrameRef.current = requestAnimationFrame(frame)
-      } else {
-        animFrameRef.current = null
-        animFromRef.current = to
-        setDisplayPoints(to)
-      }
-    }
-
-    animFrameRef.current = requestAnimationFrame(frame)
+    })
 
     return () => {
-      if (animFrameRef.current !== null) {
-        cancelAnimationFrame(animFrameRef.current)
-        animFrameRef.current = null
+      if (animCancelRef.current) {
+        animCancelRef.current()
+        animCancelRef.current = null
       }
     }
   }, [pointsTotal])

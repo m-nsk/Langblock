@@ -63,6 +63,7 @@ export interface Sentence {
   html: string
   text: string
   parent: Element
+  absTop: number
 }
 
 export interface ParentEntry {
@@ -82,10 +83,11 @@ export function buildSentences(): {
     if (isExcluded(p)) continue
     const domSentences = extractSentencesFromDOM(p)
     if (domSentences.length === 0) continue
+    const absTop = p.getBoundingClientRect().top + window.scrollY
     const entries: ParentEntry[] = []
     for (const { html, text } of domSentences) {
       entries.push({ html, text, globalIdx: sentences.length })
-      sentences.push({ html, text, parent: p })
+      sentences.push({ html, text, parent: p, absTop })
     }
     sentencesByParent.set(p, entries)
   }
@@ -95,7 +97,6 @@ export function buildSentences(): {
 
 export function scoreSentence(s: Sentence, pageHeight: number): number {
   let score = Math.max(0, 200 - s.text.length)
-  const absTop = s.parent.getBoundingClientRect().top + window.scrollY
-  if (pageHeight > 0 && absTop / pageHeight < 0.2) score -= 15
+  if (pageHeight > 0 && s.absTop / pageHeight < 0.2) score -= 15
   return score
 }
